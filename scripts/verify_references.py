@@ -588,6 +588,8 @@ def _build_output(idx: int, ref: dict, match: MatchResult, raw_text: str) -> dic
         details = f"{details}; metadata inconsistencies require review"
     elif suspicion_reasons and status == "unverifiable":
         status = "suspicious"
+        confidence = max(confidence, 40)
+        details = f"{details}; heuristic signals indicate potential fabrication"
 
     out = {
         "ref_index": idx,

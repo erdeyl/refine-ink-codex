@@ -77,7 +77,7 @@ _NUMBERED_RE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)\.\s|\((\d+)\))\s*")
 
 # Author-year style start for non-numbered bibliographies.
 _AUTHOR_YEAR_START_RE = re.compile(
-    r"^[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’\-]+(?:\s+[A-ZÀ-ÖØ-Ý][A-Za-zÀ-ÖØ-öø-ÿ'’\-]+){0,2},"
+    r"^[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+(?:\s+[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+){0,2},"
 )
 
 
@@ -124,7 +124,7 @@ def _looks_like_new_reference_line(stripped: str, raw_line: str) -> bool:
         return True
 
     # Fallback for styles like "Surname et al. (2020) ..."
-    return bool(re.match(r"^[A-ZÀ-ÖØ-Ý][^.!?]{0,100}\((?:19|20)\d{2}[a-z]?\)", stripped))
+    return bool(re.match(r"^[A-ZÀ-ÖØ-ÝŐŰ][^.!?]{0,100}\((?:19|20)\d{2}[a-z]?\)", stripped))
 
 
 def _split_references(ref_block: str) -> list[str]:
@@ -144,9 +144,8 @@ def _split_references(ref_block: str) -> list[str]:
 
         # Split on explicit numbered markers and author-year new-entry cues.
         if current and _looks_like_new_reference_line(stripped, line):
-            if current:
-                entries.append(" ".join(current))
-                current = []
+            entries.append(" ".join(current))
+            current = []
 
         current.append(stripped)
 

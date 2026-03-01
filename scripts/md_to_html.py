@@ -96,6 +96,7 @@ def sanitize_html(html: str) -> str:
         "pre",
         "span",
         "strong",
+        "sub",
         "sup",
         "table",
         "tbody",
