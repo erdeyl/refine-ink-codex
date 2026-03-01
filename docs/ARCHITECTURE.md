@@ -26,6 +26,7 @@ PDF input
   v
 [Phase 4] codex_prepare_review.py scaffolding
   -> chunks/chunk_map.json
+     (total_chunks + chunks + dimension_assignments)
   -> agent_outputs/*.md stubs
   -> output/review_EN.md template
   -> output/manifest.json

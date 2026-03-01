@@ -5,8 +5,10 @@ How to run a review in the Codex-native workflow.
 ## 1. Prepare Workspace (Deterministic Phase)
 
 ```bash
-python scripts/codex_prepare_review.py path/to/paper.pdf --email you@example.com
+python scripts/codex_prepare_review.py [path/to/paper.pdf] --email you@example.com
 ```
+
+If the path is omitted, `codex_prepare_review.py` auto-detects a single `.pdf` in the current directory and validates it before processing.
 
 Optional flags:
 
@@ -36,7 +38,7 @@ Key files:
 - `input/original_references.json`
 - `verification/original_verification.json`
 - `verification/reference_report.json`
-- `chunks/chunk_map.json`
+- `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
 - `output/review_EN.md`
 - `output/manifest.json`
 

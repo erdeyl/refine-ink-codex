@@ -34,6 +34,7 @@ pip install -r scripts/requirements.txt
 Installed packages:
 
 - `pymupdf4llm` for PDF -> Markdown conversion
+- `pymupdf` for direct PDF text/table extraction in verification
 - `httpx` for async API requests
 - `markdown` and `jinja2` for HTML rendering
 - `bleach` for report HTML sanitization
@@ -63,8 +64,10 @@ python scripts/md_to_html.py --help
 ## 5. First Run
 
 ```bash
-python scripts/codex_prepare_review.py path/to/paper.pdf --email you@example.com
+python scripts/codex_prepare_review.py [path/to/paper.pdf] --email you@example.com
 ```
+
+If `path/to/paper.pdf` is omitted, the script auto-detects a single `.pdf` in the current directory.
 
 This creates `reviews/<paper>_<YYYY-MM-DD>/` with deterministic outputs and analysis scaffolds.
 

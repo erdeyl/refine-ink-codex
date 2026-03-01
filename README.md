@@ -28,10 +28,12 @@ python scripts/codex_prepare_review.py path/to/paper.pdf --email you@example.com
 
 After preparation completes, continue review passes in the generated workspace and finalize `output/review_EN.md`.
 
+If no path is provided, the script auto-detects a single `.pdf` in the current directory.
+
 ## Review Workflow (Codex)
 
 1. Run deterministic preparation:
-   - `python scripts/codex_prepare_review.py path/to/paper.pdf`
+   - `python scripts/codex_prepare_review.py [path/to/paper.pdf]`
 2. Open `reviews/<paper>_<date>/NEXT_STEPS.md`
 3. Fill analysis outputs under `agent_outputs/`:
    - `math-logic.md`, `notation.md`, `exposition.md`, `empirical.md`, `cross-section.md`, `econometrics.md`, `literature.md`, `references.md`, `language.md`
@@ -48,7 +50,7 @@ Each prepared review contains:
 - `input/original_references.json`
 - `verification/original_verification.json`
 - `verification/reference_report.json`
-- `chunks/chunk_map.json`
+- `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
 - `agent_outputs/*.md` (scaffolded)
 - `output/review_EN.md`
 - `output/manifest.json`

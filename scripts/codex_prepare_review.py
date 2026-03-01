@@ -18,6 +18,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+# Ensure sibling scripts are importable regardless of invocation cwd.
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from pdf_to_markdown import EXIT_OK as CONVERT_OK
 from pdf_to_markdown import convert_pdf
 from verify_conversion import verify as verify_conversion
@@ -44,6 +49,8 @@ AGENT_PASSES = [
 ]
 
 HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
+PDF_MAGIC = b"%PDF-"
+DEFAULT_PDF_SCAN_EXCLUDES = {".git", ".venv", "venv", "__pycache__", "legacy", "reviews"}
 
 
 def slugify(text: str) -> str:
@@ -76,6 +83,61 @@ def count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text, flags=re.UNICODE))
 
 
+def _validate_pdf_path(pdf_path: Path) -> None:
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise ValueError(f"invalid PDF path: {pdf_path}")
+    if pdf_path.suffix.lower() != ".pdf":
+        raise ValueError(f"path does not end with .pdf: {pdf_path}")
+    if not os.access(pdf_path, os.R_OK):
+        raise ValueError(f"PDF is not readable: {pdf_path}")
+    try:
+        with pdf_path.open("rb") as f:
+            header = f.read(len(PDF_MAGIC))
+    except OSError as exc:
+        raise ValueError(f"cannot read PDF header: {exc}") from exc
+    if header != PDF_MAGIC:
+        raise ValueError(
+            f"file does not look like a PDF (missing %PDF- header): {pdf_path}"
+        )
+
+
+def _discover_pdf_candidates(base_dir: Path) -> list[Path]:
+    candidates: list[Path] = []
+    for entry in sorted(base_dir.iterdir()):
+        if entry.name in DEFAULT_PDF_SCAN_EXCLUDES:
+            continue
+        if entry.is_file() and entry.suffix.lower() == ".pdf":
+            candidates.append(entry.resolve())
+    return candidates
+
+
+def resolve_pdf_path(pdf_arg: str | None) -> Path:
+    if pdf_arg:
+        pdf_path = Path(pdf_arg).expanduser().resolve()
+        _validate_pdf_path(pdf_path)
+        return pdf_path
+
+    cwd = Path.cwd().resolve()
+    candidates = _discover_pdf_candidates(cwd)
+    if len(candidates) == 1:
+        pdf_path = candidates[0]
+        _validate_pdf_path(pdf_path)
+        print(f"Auto-detected PDF: {pdf_path}")
+        return pdf_path
+
+    if not candidates:
+        raise ValueError(
+            "no PDF path provided and no candidate PDFs found in current directory; "
+            "pass an explicit path, e.g. python scripts/codex_prepare_review.py path/to/paper.pdf"
+        )
+
+    listed = "\n".join(f"  - {p}" for p in candidates)
+    raise ValueError(
+        "multiple PDF candidates found in current directory; pass one explicitly:\n"
+        f"{listed}"
+    )
+
+
 def detect_section_tags(heading: str, text: str) -> dict[str, bool]:
     heading_lower = heading.lower()
     return {
@@ -87,7 +149,82 @@ def detect_section_tags(heading: str, text: str) -> dict[str, bool]:
     }
 
 
-def build_chunk_map(converted_md_path: Path) -> list[dict[str, Any]]:
+def _group_chunk_ids(chunk_ids: list[str], group_size: int = 3) -> list[list[str]]:
+    if group_size <= 0:
+        group_size = 1
+    return [chunk_ids[i : i + group_size] for i in range(0, len(chunk_ids), group_size)]
+
+
+def _heading_contains_any(heading: str, tokens: list[str]) -> bool:
+    lowered = heading.lower()
+    return any(token in lowered for token in tokens)
+
+
+def _build_cross_section_pairs(chunks: list[dict[str, Any]]) -> list[list[str]]:
+    by_heading = {chunk["id"]: chunk["heading"] for chunk in chunks}
+
+    def find_first(tokens: list[str]) -> str | None:
+        for chunk_id, heading in by_heading.items():
+            if _heading_contains_any(heading, tokens):
+                return chunk_id
+        return None
+
+    pairs: list[list[str]] = []
+    intro = find_first(["introduction", "bevezetes"])
+    methods = find_first(["method", "methodology", "identification", "modszertan"])
+    results = find_first(["result", "findings", "eredmeny"])
+    abstract = next((c["id"] for c in chunks if c.get("is_abstract")), None)
+    conclusion = find_first(["conclusion", "discussion", "kovetkeztetes"])
+
+    for a, b in [(intro, results), (methods, results), (abstract, conclusion)]:
+        if a and b and a != b:
+            pairs.append([a, b])
+
+    if not pairs and len(chunks) >= 2:
+        pairs.append([chunks[0]["id"], chunks[-1]["id"]])
+
+    return pairs
+
+
+def _assign_dimensions(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    chunk_ids = [chunk["id"] for chunk in chunks]
+    math_logic = [c["id"] for c in chunks if c.get("has_equations")]
+    empirical = [c["id"] for c in chunks if c.get("has_tables") or c.get("has_figures")]
+    literature = [
+        c["id"]
+        for c in chunks
+        if _heading_contains_any(
+            c["heading"],
+            ["literature", "related work", "background", "irodalom", "elmeleti hatter"],
+        )
+    ]
+    references = [c["id"] for c in chunks if c.get("is_references")]
+    econometrics = [
+        c["id"]
+        for c in chunks
+        if _heading_contains_any(
+            c["heading"],
+            ["method", "methodology", "model", "identification", "estimation", "regression"],
+        )
+    ]
+
+    if not econometrics and empirical:
+        econometrics = empirical.copy()
+
+    return {
+        "math-logic": math_logic,
+        "notation": _group_chunk_ids(chunk_ids, 3),
+        "exposition": _group_chunk_ids(chunk_ids, 3),
+        "empirical": empirical,
+        "cross-section": _build_cross_section_pairs(chunks),
+        "econometrics": econometrics,
+        "literature": literature,
+        "references": references,
+        "language": _group_chunk_ids(chunk_ids, 3),
+    }
+
+
+def build_chunk_map(converted_md_path: Path) -> dict[str, Any]:
     text = converted_md_path.read_text(encoding="utf-8")
     lines = text.splitlines()
 
@@ -100,29 +237,38 @@ def build_chunk_map(converted_md_path: Path) -> list[dict[str, Any]]:
             heading_rows.append((index, level, heading))
 
     if not lines:
-        return []
+        return {
+            "total_chunks": 0,
+            "chunks": [],
+            "dimension_assignments": _assign_dimensions([]),
+        }
 
     chunks: list[dict[str, Any]] = []
     if not heading_rows:
         section_text = "\n".join(lines)
         tags = detect_section_tags("Document", section_text)
-        chunks.append(
-            {
-                "id": "c1",
-                "heading": "Document",
-                "level": 0,
-                "start_line": 1,
-                "end_line": len(lines),
-                "words": count_words(section_text),
-                **tags,
-            }
-        )
-        return chunks
+        single = {
+            "id": "c1",
+            "heading": "Document",
+            "level": 0,
+            "start_line": 1,
+            "end_line": len(lines),
+            "words": count_words(section_text),
+            **tags,
+        }
+        chunks.append(single)
+        return {
+            "total_chunks": 1,
+            "chunks": chunks,
+            "dimension_assignments": _assign_dimensions(chunks),
+        }
 
     starts = heading_rows + [(len(lines) + 1, 0, "")]
     for idx, (start_line, level, heading) in enumerate(heading_rows, start=1):
         next_start = starts[idx][0]
         end_line = max(start_line, next_start - 1)
+        # start_line/end_line are 1-based; python slicing end is exclusive, so this
+        # correctly maps to inclusive end_line.
         section_text = "\n".join(lines[start_line - 1 : end_line])
         tags = detect_section_tags(heading, section_text)
         chunks.append(
@@ -137,7 +283,11 @@ def build_chunk_map(converted_md_path: Path) -> list[dict[str, Any]]:
             }
         )
 
-    return chunks
+    return {
+        "total_chunks": len(chunks),
+        "chunks": chunks,
+        "dimension_assignments": _assign_dimensions(chunks),
+    }
 
 
 def write_agent_output_stubs(agent_output_dir: Path) -> None:
@@ -160,7 +310,7 @@ def review_template(paper_title: str, review_dir: Path, verification_status: str
 **Manuscript:** {paper_title}
 **Review Workspace:** {review_dir}
 **Conversion Verification:** {verification_status}
-**Date:** {datetime.now().strftime('%Y-%m-%d')}
+**Date:** {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
 
 ## Summary
 
@@ -216,7 +366,7 @@ Review workspace is ready at:
 
 - Conversion + verification completed
 - Reference verification completed
-- Chunk map generated at `chunks/chunk_map.json`
+- Chunk map generated at `chunks/chunk_map.json` (`total_chunks`, `chunks`, `dimension_assignments`)
 - References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable
 
 ## Run qualitative analysis passes
@@ -255,9 +405,10 @@ python scripts/md_to_html.py {review_dir}/output/review_EN.md
 
 
 def prepare_review(args: argparse.Namespace) -> int:
-    pdf_path = Path(args.pdf).expanduser().resolve()
-    if not pdf_path.is_file() or pdf_path.suffix.lower() != ".pdf":
-        print(f"Error: invalid PDF path: {pdf_path}", file=sys.stderr)
+    try:
+        pdf_path = resolve_pdf_path(args.pdf)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return EXIT_INPUT_ERROR
 
     reviews_dir = Path(args.reviews_dir).expanduser().resolve()
@@ -327,7 +478,14 @@ def prepare_review(args: argparse.Namespace) -> int:
     if references and not args.skip_references:
         try:
             s2_api_key = args.s2_api_key or os.environ.get("S2_API_KEY")
-            reference_results = asyncio.run(verify_all(references, args.email, s2_api_key))
+            mailto = args.email.strip() if args.email else None
+            if not mailto:
+                print(
+                    "Warning: --email not provided; CrossRef/OpenAlex polite pool parameters "
+                    "will be omitted.",
+                    file=sys.stderr,
+                )
+            reference_results = asyncio.run(verify_all(references, mailto, s2_api_key))
         except Exception as exc:
             print(f"Error during reference verification: {exc}", file=sys.stderr)
             return EXIT_REFERENCE_ERROR
@@ -366,7 +524,7 @@ def prepare_review(args: argparse.Namespace) -> int:
         },
         "chunking": {
             "chunk_map_path": str(chunk_map_path),
-            "total_chunks": len(chunk_map),
+            "total_chunks": chunk_map.get("total_chunks", 0),
         },
         "reference_verification": {
             **ref_summary,
@@ -399,7 +557,11 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Prepare a Codex review workspace from an academic PDF.",
     )
-    parser.add_argument("pdf", help="Path to input PDF")
+    parser.add_argument(
+        "pdf",
+        nargs="?",
+        help="Path to input PDF (optional: auto-detect a single PDF in current directory)",
+    )
     parser.add_argument(
         "--reviews-dir",
         default="reviews",
@@ -408,8 +570,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--name", default=None, help="Optional slug override")
     parser.add_argument(
         "--email",
-        default="review@refine-ink.local",
-        help="Email for CrossRef/OpenAlex polite pool",
+        default=os.environ.get("REFINE_INK_EMAIL", ""),
+        help="Email for CrossRef/OpenAlex polite pool (or set REFINE_INK_EMAIL)",
     )
     parser.add_argument("--s2-api-key", default=None, help="Semantic Scholar API key")
     parser.add_argument(
