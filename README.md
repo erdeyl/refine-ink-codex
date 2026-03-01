@@ -30,6 +30,14 @@ After preparation completes, continue review passes in the generated workspace a
 
 If no path is provided, the script auto-detects a single `.pdf` in the current directory.
 
+## Codex App Workflow
+
+1. Open the repository in the Codex app.
+2. Use the plus button to upload a PDF.
+3. Type `/review`.
+4. The agent resolves the uploaded PDF and runs:
+   - `python scripts/codex_prepare_review.py <resolved_pdf_path>`
+
 ## Review Workflow (Codex)
 
 1. Run deterministic preparation:

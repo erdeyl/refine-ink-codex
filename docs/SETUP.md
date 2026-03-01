@@ -71,6 +71,8 @@ If `path/to/paper.pdf` is omitted, the script auto-detects a single `.pdf` in th
 
 This creates `reviews/<paper>_<YYYY-MM-DD>/` with deterministic outputs and analysis scaffolds.
 
+In the Codex app workflow, you can upload a PDF and type `/review`; the agent should resolve the uploaded file and run the same command.
+
 ## Troubleshooting
 
 ### Conversion fails

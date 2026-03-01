@@ -10,6 +10,15 @@ python scripts/codex_prepare_review.py [path/to/paper.pdf] --email you@example.c
 
 If the path is omitted, `codex_prepare_review.py` auto-detects a single `.pdf` in the current directory and validates it before processing.
 
+### Codex App Shortcut
+
+In the Codex app, you can use:
+
+- Upload PDF with the plus button
+- Type `/review`
+
+The agent should resolve the uploaded file and run `codex_prepare_review.py` automatically.
+
 Optional flags:
 
 - `--reviews-dir reviews_alt`

@@ -16,6 +16,20 @@ python scripts/codex_prepare_review.py [path/to/paper.pdf] [--email you@example.
 
 If no PDF path is provided, the script auto-detects a single `.pdf` in the current directory and performs preflight validation.
 
+## Codex App `/review` Workflow
+
+In the ChatGPT Codex app, treat `/review` as the review command:
+
+1. User uploads a PDF with the plus button.
+2. User types `/review` (optionally `/review /absolute/path/to/file.pdf`).
+3. Resolve the PDF path:
+   - If `/review <path>` is provided, use that path.
+   - If only `/review` is provided and exactly one uploaded PDF is present, use it.
+   - If multiple PDFs are available, ask the user to choose one.
+4. Run:
+   - `python scripts/codex_prepare_review.py "<resolved_pdf_path>"`
+5. Continue with analysis passes from the generated review workspace.
+
 This command performs setup and deterministic phases:
 
 1. Create review workspace under `reviews/`

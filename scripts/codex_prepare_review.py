@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import sys
+import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -83,6 +84,12 @@ def count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text, flags=re.UNICODE))
 
 
+def _normalize_match_text(text: str) -> str:
+    lowered = text.lower()
+    folded = unicodedata.normalize("NFD", lowered)
+    return "".join(ch for ch in folded if unicodedata.category(ch) != "Mn")
+
+
 def _validate_pdf_path(pdf_path: Path) -> None:
     if not pdf_path.exists() or not pdf_path.is_file():
         raise ValueError(f"invalid PDF path: {pdf_path}")
@@ -139,7 +146,7 @@ def resolve_pdf_path(pdf_arg: str | None) -> Path:
 
 
 def detect_section_tags(heading: str, text: str) -> dict[str, bool]:
-    heading_lower = heading.lower()
+    heading_lower = _normalize_match_text(heading)
     return {
         "has_equations": bool(re.search(r"\$|\\\(|\\\[", text)),
         "has_tables": bool(re.search(r"^\s*\|.+\|\s*$", text, flags=re.MULTILINE)),
@@ -156,29 +163,41 @@ def _group_chunk_ids(chunk_ids: list[str], group_size: int = 3) -> list[list[str
 
 
 def _heading_contains_any(heading: str, tokens: list[str]) -> bool:
-    lowered = heading.lower()
-    return any(token in lowered for token in tokens)
+    lowered = _normalize_match_text(heading)
+    return any(_normalize_match_text(token) in lowered for token in tokens)
 
 
 def _build_cross_section_pairs(chunks: list[dict[str, Any]]) -> list[list[str]]:
-    by_heading = {chunk["id"]: chunk["heading"] for chunk in chunks}
+    by_heading = [(chunk["id"], chunk["heading"]) for chunk in chunks]
 
-    def find_first(tokens: list[str]) -> str | None:
-        for chunk_id, heading in by_heading.items():
-            if _heading_contains_any(heading, tokens):
-                return chunk_id
-        return None
+    def find_all(tokens: list[str]) -> list[str]:
+        return [chunk_id for chunk_id, heading in by_heading if _heading_contains_any(heading, tokens)]
+
+    def unique_pairs(first_ids: list[str], second_ids: list[str]) -> list[list[str]]:
+        pairs: list[list[str]] = []
+        seen: set[tuple[str, str]] = set()
+        for first in first_ids:
+            for second in second_ids:
+                if not first or not second or first == second:
+                    continue
+                key = (first, second)
+                if key in seen:
+                    continue
+                seen.add(key)
+                pairs.append([first, second])
+        return pairs
 
     pairs: list[list[str]] = []
-    intro = find_first(["introduction", "bevezetes"])
-    methods = find_first(["method", "methodology", "identification", "modszertan"])
-    results = find_first(["result", "findings", "eredmeny"])
+    intro_ids = find_all(["introduction", "bevezetés", "bevezetes"])
+    methods_ids = find_all(["method", "methodology", "identification", "módszertan", "modszertan"])
+    results_ids = find_all(["result", "results", "findings", "eredmény", "eredmeny", "eredmények", "eredmenyek"])
     abstract = next((c["id"] for c in chunks if c.get("is_abstract")), None)
-    conclusion = find_first(["conclusion", "discussion", "kovetkeztetes"])
+    conclusion_ids = find_all(["conclusion", "discussion", "következtetés", "kovetkeztetes"])
 
-    for a, b in [(intro, results), (methods, results), (abstract, conclusion)]:
-        if a and b and a != b:
-            pairs.append([a, b])
+    pairs.extend(unique_pairs(intro_ids[:1], results_ids[-2:] if len(results_ids) > 1 else results_ids))
+    pairs.extend(unique_pairs(methods_ids[:1], results_ids[-2:] if len(results_ids) > 1 else results_ids))
+    if abstract and conclusion_ids:
+        pairs.extend(unique_pairs([abstract], conclusion_ids[-1:]))
 
     if not pairs and len(chunks) >= 2:
         pairs.append([chunks[0]["id"], chunks[-1]["id"]])
@@ -195,7 +214,14 @@ def _assign_dimensions(chunks: list[dict[str, Any]]) -> dict[str, Any]:
         for c in chunks
         if _heading_contains_any(
             c["heading"],
-            ["literature", "related work", "background", "irodalom", "elmeleti hatter"],
+            [
+                "literature",
+                "related work",
+                "background",
+                "irodalom",
+                "elméleti háttér",
+                "elmeleti hatter",
+            ],
         )
     ]
     references = [c["id"] for c in chunks if c.get("is_references")]

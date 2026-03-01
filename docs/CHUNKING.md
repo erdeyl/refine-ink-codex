@@ -70,6 +70,8 @@ Assignments are metadata-only and generated with deterministic rules:
 - `notation`, `exposition`, `language`: all chunks grouped in windows of 3
 - `cross-section`: best-effort heading pairs (intro-results, methods-results, abstract-conclusion), fallback first-last
 
+Heading keyword matching is diacritic-insensitive, so Hungarian headings match whether accents are present or omitted.
+
 ## Limits
 
 - No token-budget optimization or overlap windows are applied
