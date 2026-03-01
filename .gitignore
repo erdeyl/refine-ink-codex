@@ -3,7 +3,7 @@ __pycache__/
 *.pyc
 .env
 .venv/
-.claude/settings.local.json
+legacy/claude/settings.local.json
 *.egg-info/
 dist/
 build/
