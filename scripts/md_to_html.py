@@ -9,7 +9,8 @@ from pathlib import Path
 
 import bleach
 import markdown
-from jinja2 import Template
+from jinja2 import Environment, select_autoescape
+from markupsafe import Markup
 
 
 def detect_language(md_text: str) -> str:
@@ -141,14 +142,18 @@ def convert(md_path: str, output_path: str | None = None) -> str:
     html_content = enhance_html(html_content)
     html_content = sanitize_html(html_content)
 
+    safe_title = bleach.clean(title, tags=[], attributes={}, protocols=[], strip=True)
+    safe_date = bleach.clean(datetime.now().strftime("%Y-%m-%d"), tags=[], attributes={}, protocols=[], strip=True)
+
     template_path = Path(__file__).parent / "review_template.html"
-    template = Template(template_path.read_text(encoding="utf-8"))
+    env = Environment(autoescape=select_autoescape(default_for_string=True, default=True))
+    template = env.from_string(template_path.read_text(encoding="utf-8"))
 
     full_html = template.render(
         lang=lang,
-        title=title,
-        content=html_content,
-        date=datetime.now().strftime("%Y-%m-%d"),
+        title=safe_title,
+        content=Markup(html_content),
+        date=safe_date,
     )
 
     if output_path is None:

@@ -11,8 +11,24 @@ Produce rigorous, evidence-grounded referee reports for academic PDFs, with dete
 When asked to review a paper, run:
 
 ```bash
-python scripts/codex_prepare_review.py path/to/paper.pdf [--email you@example.com]
+python scripts/codex_prepare_review.py [path/to/paper.pdf] [--email you@example.com]
 ```
+
+If no PDF path is provided, the script auto-detects a single `.pdf` in the current directory and performs preflight validation.
+
+## Codex App `/review` Workflow
+
+In the ChatGPT Codex app, treat `/review` as the review command:
+
+1. User uploads a PDF with the plus button.
+2. User types `/review` (optionally `/review /absolute/path/to/file.pdf`).
+3. Resolve the PDF path:
+   - If `/review <path>` is provided, use that path.
+   - If only `/review` is provided and exactly one uploaded PDF is present, use it.
+   - If multiple PDFs are available, ask the user to choose one.
+4. Run:
+   - `python scripts/codex_prepare_review.py "<resolved_pdf_path>"`
+5. Continue with analysis passes from the generated review workspace.
 
 This command performs setup and deterministic phases:
 
@@ -20,7 +36,7 @@ This command performs setup and deterministic phases:
 2. Convert PDF to Markdown (`pdf_to_markdown.py`)
 3. Verify conversion fidelity (`verify_conversion.py` logic)
 4. Verify references via CrossRef/OpenAlex/Semantic Scholar (`verify_references.py`)
-5. Generate scaffold outputs (`chunks/chunk_map.json`, `agent_outputs/*.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
+5. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
 
 ## Manual Analysis Workflow (Codex)
 

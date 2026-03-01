@@ -66,8 +66,11 @@ _NEXT_SECTION_RE = re.compile(
     re.IGNORECASE | re.MULTILINE,
 )
 
-# DOI patterns
-_DOI_RE = re.compile(r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)(10\.\d{4,}/\S+)", re.IGNORECASE)
+# DOI patterns. Exclude common trailing delimiters captured in prose.
+_DOI_RE = re.compile(
+    r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)(10\.\d{4,}/[^\s\])}>\"',;]+)",
+    re.IGNORECASE,
+)
 
 # Year (four digits, commonly 19xx or 20xx)
 _YEAR_RE = re.compile(r"\b((?:19|20)\d{2})\b")
@@ -221,12 +224,15 @@ def _parse_reference(raw_text: str) -> dict:
     """Parse a single reference string into a structured dict."""
     doi_match = _DOI_RE.search(raw_text)
     year_match = _YEAR_RE.search(raw_text)
+    cleaned_doi = ""
+    if doi_match:
+        cleaned_doi = doi_match.group(1).strip().strip("<>{}").rstrip(".,;:)]}'\"")
 
     return {
         "title": _extract_title(raw_text),
         "authors": _extract_authors(raw_text),
         "year": year_match.group(1) if year_match else "",
-        "doi": doi_match.group(1).rstrip(".,;)") if doi_match else "",
+        "doi": cleaned_doi,
         "journal": _extract_journal(raw_text),
         "raw_text": raw_text.strip(),
     }

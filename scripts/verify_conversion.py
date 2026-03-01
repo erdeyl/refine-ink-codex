@@ -35,8 +35,14 @@ except ImportError:
 # PDF extraction helpers
 # ---------------------------------------------------------------------------
 
+def _require_fitz() -> None:
+    if fitz is None:
+        raise RuntimeError("pymupdf is required. Install with: pip install pymupdf")
+
+
 def extract_pdf_text(pdf_path: str) -> str:
     """Return the full plain-text content of a PDF, page by page."""
+    _require_fitz()
     doc = fitz.open(pdf_path)
     pages = []
     for page in doc:
@@ -47,6 +53,7 @@ def extract_pdf_text(pdf_path: str) -> str:
 
 def extract_pdf_blocks(pdf_path: str) -> list[dict]:
     """Return per-page block-level data (text, fonts, sizes) for heuristic analysis."""
+    _require_fitz()
     doc = fitz.open(pdf_path)
     blocks = []
     for page_num, page in enumerate(doc):
@@ -130,6 +137,7 @@ def pdf_headings(blocks: list[dict]) -> list[str]:
 
 def pdf_tables(pdf_path: str) -> int:
     """Count tables in the PDF using pymupdf's built-in table finder."""
+    _require_fitz()
     doc = fitz.open(pdf_path)
     count = 0
     for page in doc:
@@ -438,8 +446,7 @@ def last_paragraph_before_references(text: str) -> str:
 
 def verify(pdf_path: str, md_path: str) -> dict:
     """Run all checks and return the JSON-serialisable report dict."""
-    if fitz is None:
-        raise RuntimeError("pymupdf is required. Install with: pip install pymupdf")
+    _require_fitz()
 
     warnings: list[str] = []
     failures: list[str] = []
@@ -457,6 +464,12 @@ def verify(pdf_path: str, md_path: str) -> dict:
     md_words = tokenize(md_text)
     pdf_wc = len(pdf_words)
     md_wc = len(md_words)
+
+    if pdf_wc == 0:
+        failures.append(
+            "PDF text extraction returned zero words; conversion quality cannot be verified."
+        )
+
     wc_diff_pct = abs(pdf_wc - md_wc) / max(pdf_wc, 1) * 100
 
     if wc_diff_pct > 3:
