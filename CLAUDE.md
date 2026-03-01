@@ -26,6 +26,7 @@ The system uses parallelized multi-pass analysis with 12 specialized agents, eac
 
 | Agent | Purpose | Model |
 |-------|---------|-------|
+| paper-parser | Parses converted markdown into analysis-ready chunks | Haiku |
 | math-logic | Equations, proofs, derivations | Sonnet |
 | notation | Symbol/variable consistency | Sonnet |
 | exposition | Argument flow, clarity | Sonnet |
