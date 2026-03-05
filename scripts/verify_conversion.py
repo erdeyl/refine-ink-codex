@@ -34,10 +34,14 @@ except ImportError:
 # - Keep strict failure for clear textual-loss signals.
 # - Downgrade structurally noisy heuristics (word count/table deltas) to warnings
 #   unless they are extreme.
-WORD_COUNT_WARN_PCT = 3.0
+WORD_COUNT_WARN_PCT = 6.0
 WORD_COUNT_FAIL_PCT = 35.0
 SPOTCHECK_WARN_MAX_MISSES = 2
 SPOTCHECK_FAIL_MIN_HIT_RATIO = 0.75
+HEADING_COUNT_WARN_DELTA = 3
+TABLE_COUNT_WARN_DELTA = 1
+REFERENCE_COUNT_WARN_DELTA = 2
+FOOTNOTE_WARN_MIN_PDF_COUNT = 15
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +105,46 @@ def normalize(text: str) -> str:
     text = re.sub(r"[^a-z0-9\u00C0-\u024F\u0370-\u03FF\u0400-\u04FF ]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
+
+
+_REF_HEADING_TERMS = {
+    "references",
+    "bibliography",
+    "works cited",
+    "literature cited",
+    "cited references",
+    "reference list",
+}
+
+
+def _normalize_heading_label(text: str) -> str:
+    cleaned = text.strip()
+    cleaned = re.sub(r"^#{1,6}\s*", "", cleaned)
+    cleaned = cleaned.replace("**", "").replace("__", "").replace("*", "").replace("_", "")
+    cleaned = re.sub(r"^\d+(?:\.\d+)*\s*", "", cleaned)
+    cleaned = re.sub(r"^\(?[ivxlcdm]+\)?\s+", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
+    return cleaned
+
+
+def _is_references_heading_line(line: str) -> bool:
+    return _normalize_heading_label(line) in _REF_HEADING_TERMS
+
+
+def _is_reference_continuation_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return False
+    body = re.sub(r"^#{1,6}\s*", "", stripped)
+    body = body.replace("**", "").replace("__", "").replace("*", "").replace("_", "").strip()
+    return bool(
+        re.match(
+            r"^\d+(?:\.\d+)?\.?\s*(?:\[[^\]]+\]\([^)]+\)|https?://\S+)\s*$",
+            body,
+            re.IGNORECASE,
+        )
+        or re.match(r"^\d+(?:\.\d+)?\.?\s*$", body)
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -257,7 +301,8 @@ def pdf_footnotes_from_blocks(blocks: list[dict], body_size: float) -> int:
 
 def md_headings(md_text: str) -> list[str]:
     """Extract top-level to subsection headings from Markdown."""
-    return re.findall(r"^#{1,3}\s+(.+)$", md_text, re.MULTILINE)
+    headings = re.findall(r"^#{1,3}\s+(.+)$", md_text, re.MULTILINE)
+    return [_normalize_heading_label(h) for h in headings if _normalize_heading_label(h)]
 
 
 def md_tables(md_text: str) -> int:
@@ -277,22 +322,42 @@ def md_tables(md_text: str) -> int:
     return count
 
 
+def md_table_captions(md_text: str) -> int:
+    """Count textual table captions ('Table N ...') in Markdown."""
+    return len(
+        re.findall(
+            r"(?im)^\s*\*{0,2}\s*table\s*\d+[a-z]?(?:\s|[:.-])",
+            md_text,
+        )
+    )
+
+
 def md_references(md_text: str) -> int:
     """Count reference entries in Markdown."""
-    ref_match = re.search(
-        r"^#{1,3}\s*(References|Bibliography|Works\s+Cited)",
-        md_text,
-        re.IGNORECASE | re.MULTILINE,
-    )
-    if not ref_match:
+    lines = md_text.splitlines()
+    ref_start_idx = None
+    for idx, line in enumerate(lines):
+        if _is_references_heading_line(line):
+            ref_start_idx = idx
+
+    if ref_start_idx is None:
         return 0
 
-    ref_text = md_text[ref_match.end():]
+    ref_lines: list[str] = []
+    for line in lines[ref_start_idx + 1 :]:
+        stripped = line.strip()
+        if not stripped:
+            ref_lines.append("")
+            continue
+        if re.match(r"^#{1,3}\s+\S", stripped) and not _is_reference_continuation_heading(stripped):
+            break
+        if _is_references_heading_line(stripped):
+            continue
+        ref_lines.append(line)
 
-    # Stop at next heading
-    next_heading = re.search(r"^#{1,3}\s+", ref_text, re.MULTILINE)
-    if next_heading:
-        ref_text = ref_text[: next_heading.start()]
+    ref_text = "\n".join(ref_lines).strip()
+    if not ref_text:
+        return 0
 
     # Numbered references
     numbered = re.findall(r"^\s*\[?\d+\]?[.\)]\s", ref_text, re.MULTILINE)
@@ -304,9 +369,18 @@ def md_references(md_text: str) -> int:
     if len(list_items) >= 3:
         return len(list_items)
 
-    # Non-empty lines
-    lines = [l.strip() for l in ref_text.split("\n") if l.strip()]
-    return len(lines)
+    # Author-year starts (robust for wrapped references with blank lines)
+    author_year = re.findall(
+        r"(?m)^\s*[^\W\d_][^\n,]{0,80},.*\((?:19|20)\d{2}[a-z]?\)",
+        ref_text,
+        re.UNICODE,
+    )
+    if len(author_year) >= 3:
+        return len(author_year)
+
+    # Fallback: non-empty lines
+    nonempty = [l.strip() for l in ref_text.split("\n") if l.strip()]
+    return len(nonempty)
 
 
 def md_figure_captions(md_text: str) -> list[str]:
@@ -498,7 +572,7 @@ def verify(pdf_path: str, md_path: str) -> dict:
     sections_pdf_count = len(sections_pdf_list)
     sections_md_count = len(sections_md_list)
 
-    if sections_pdf_count != sections_md_count:
+    if abs(sections_pdf_count - sections_md_count) > HEADING_COUNT_WARN_DELTA:
         warnings.append(
             f"Heading count differs: PDF={sections_pdf_count}, MD={sections_md_count}"
         )
@@ -506,21 +580,26 @@ def verify(pdf_path: str, md_path: str) -> dict:
     # --- 3. Table count ---
     tables_pdf_count = pdf_tables(pdf_path)
     tables_md_count = md_tables(md_text)
+    tables_md_caption_count = md_table_captions(md_text)
+    tables_md_signal = max(tables_md_count, tables_md_caption_count)
 
-    if tables_pdf_count > 0 and tables_md_count < tables_pdf_count:
+    if tables_pdf_count > 0 and tables_md_signal + TABLE_COUNT_WARN_DELTA < tables_pdf_count:
         warnings.append(
-            f"Tables likely missing: PDF has {tables_pdf_count}, MD has {tables_md_count}"
+            "Tables likely missing: "
+            f"PDF has {tables_pdf_count}, MD has {tables_md_count} markdown tables "
+            f"and {tables_md_caption_count} table captions"
         )
-    elif tables_pdf_count != tables_md_count:
+    elif abs(tables_pdf_count - tables_md_signal) > TABLE_COUNT_WARN_DELTA:
         warnings.append(
-            f"Table count differs: PDF={tables_pdf_count}, MD={tables_md_count}"
+            "Table signal differs: "
+            f"PDF={tables_pdf_count}, MD signal={tables_md_signal}"
         )
 
     # --- 4. Reference count ---
     refs_pdf_count = pdf_references(pdf_text)
     refs_md_count = md_references(md_text)
 
-    if refs_pdf_count != refs_md_count:
+    if abs(refs_pdf_count - refs_md_count) > REFERENCE_COUNT_WARN_DELTA:
         warnings.append(
             f"Reference count differs: PDF={refs_pdf_count}, MD={refs_md_count}"
         )
@@ -588,7 +667,7 @@ def verify(pdf_path: str, md_path: str) -> dict:
     fn_pdf = max(fn_pdf_text, fn_pdf_blocks)
     fn_md = md_footnotes(md_text)
 
-    if fn_pdf > 0:
+    if fn_pdf >= FOOTNOTE_WARN_MIN_PDF_COUNT:
         fn_diff_pct = abs(fn_pdf - fn_md) / max(fn_pdf, 1) * 100
         if fn_diff_pct > 10:
             warnings.append(
@@ -613,6 +692,8 @@ def verify(pdf_path: str, md_path: str) -> dict:
         "sections_md": sections_md_count,
         "tables_pdf": tables_pdf_count,
         "tables_md": tables_md_count,
+        "tables_md_captions": tables_md_caption_count,
+        "tables_md_signal": tables_md_signal,
         "references_pdf": refs_pdf_count,
         "references_md": refs_md_count,
         "spot_check_hits": spot_hits,

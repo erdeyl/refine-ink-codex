@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -38,37 +37,28 @@ EXIT_IO_ERROR = 3           # cannot write output
 # Reference extraction helpers
 # ---------------------------------------------------------------------------
 
-# Patterns that typically start the reference / bibliography section
-_REF_HEADING_PATTERNS: list[re.Pattern] = [
-    re.compile(
-        r"^#{1,3}\s*(References|Bibliography|Works\s+Cited|Literature\s+Cited"
-        r"|Cited\s+References|Reference\s+List)\s*$",
-        re.IGNORECASE | re.MULTILINE,
-    ),
-    # Some PDFs produce bold headings instead of Markdown headings
-    re.compile(
-        r"^\*{1,2}(References|Bibliography|Works\s+Cited|Literature\s+Cited"
-        r"|Cited\s+References|Reference\s+List)\*{1,2}\s*$",
-        re.IGNORECASE | re.MULTILINE,
-    ),
-    # Plain text heading (all-caps or title-case on its own line)
-    re.compile(
-        r"^(REFERENCES|BIBLIOGRAPHY|References|Bibliography)\s*$",
-        re.MULTILINE,
-    ),
-]
+_REF_HEADING_TERMS = {
+    "references",
+    "bibliography",
+    "works cited",
+    "literature cited",
+    "cited references",
+    "reference list",
+}
 
 # Headings that would mark the END of the references section
 _NEXT_SECTION_RE = re.compile(
     r"^#{1,3}\s+\S|"
     r"^\*{1,2}[A-Z][A-Za-z ]+\*{1,2}\s*$|"
-    r"^(Appendix|Supplementary|Acknowledgment|Acknowledge)",
+    r"^(Appendix|Supplementary)\b.*$|"
+    r"^(Acknowledg(?:e)?ments?)\s*$",
     re.IGNORECASE | re.MULTILINE,
 )
 
 # DOI patterns. Exclude common trailing delimiters captured in prose.
 _DOI_RE = re.compile(
-    r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)(10\.\d{4,}/[^\s\])}>\"',;]+)",
+    r"(?:doi[:\s]*|https?://(?:dx\.)?doi\.org/)"
+    r"(10\.\d{4,}/[^\s\])}>\"',;]+(?:\s+[^\s\])}>\"',;]+)*)",
     re.IGNORECASE,
 )
 
@@ -80,7 +70,8 @@ _NUMBERED_RE = re.compile(r"^\s*(?:\[(\d+)\]|(\d+)\.\s|\((\d+)\))\s*")
 
 # Author-year style start for non-numbered bibliographies.
 _AUTHOR_YEAR_START_RE = re.compile(
-    r"^[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+(?:\s+[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+){0,2},"
+    r"^[^\W\d_][^\W\d_'’\-\.]+(?:\s+[^\W\d_][^\W\d_'’\-\.]+){0,3},",
+    re.UNICODE,
 )
 
 _NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)\.\s+(.+?)\s*$")
@@ -98,24 +89,71 @@ _INSTITUTIONAL_REF_START_RE = re.compile(
 
 def _find_references_section(md_text: str) -> Optional[str]:
     """Return the raw text of the references section, or None."""
-    matches: list[re.Match[str]] = []
-    for pattern in _REF_HEADING_PATTERNS:
-        matches.extend(pattern.finditer(md_text))
-
-    if not matches:
+    lines = md_text.splitlines(keepends=True)
+    if not lines:
         return None
 
-    # References are typically near the end; use the latest heading match.
-    best_match = max(matches, key=lambda m: m.start())
-    best_start = best_match.end()
+    line_offsets: list[int] = []
+    offset = 0
+    ref_heading_idx: Optional[int] = None
+    for idx, line in enumerate(lines):
+        line_offsets.append(offset)
+        offset += len(line)
+        if _is_reference_heading_line(line):
+            ref_heading_idx = idx
 
-    # Find where the next major section starts after references
-    remainder = md_text[best_start:]
-    end_match = _NEXT_SECTION_RE.search(remainder)
-    if end_match:
-        remainder = remainder[: end_match.start()]
+    if ref_heading_idx is None:
+        return None
 
-    return remainder.strip()
+    start_offset = line_offsets[ref_heading_idx] + len(lines[ref_heading_idx])
+    end_offset = len(md_text)
+
+    for idx in range(ref_heading_idx + 1, len(lines)):
+        if _is_next_section_heading(lines[idx]):
+            end_offset = line_offsets[idx]
+            break
+
+    return md_text[start_offset:end_offset].strip()
+
+
+def _normalize_heading_line(line: str) -> str:
+    stripped = line.strip()
+    stripped = re.sub(r"^#{1,6}\s*", "", stripped)
+    stripped = stripped.replace("**", "").replace("__", "").replace("*", "").replace("_", "")
+    stripped = re.sub(r"^\d+(?:\.\d+)*\s*", "", stripped)
+    stripped = re.sub(r"^\(?[ivxlcdm]+\)?\s+", "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s+", " ", stripped).strip().lower()
+    return stripped
+
+
+def _is_reference_heading_line(line: str) -> bool:
+    return _normalize_heading_line(line) in _REF_HEADING_TERMS
+
+
+def _is_next_section_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if _is_reference_heading_line(stripped):
+        return False
+    if _is_reference_continuation_heading(stripped):
+        return False
+    return bool(_NEXT_SECTION_RE.match(stripped))
+
+
+def _is_reference_continuation_heading(line: str) -> bool:
+    if not line.startswith("#"):
+        return False
+    body = re.sub(r"^#{1,6}\s*", "", line).strip()
+    body = body.replace("**", "").replace("__", "").replace("*", "").replace("_", "").strip()
+    return bool(
+        re.match(
+            r"^\d+(?:\.\d+)?\.?\s*(?:\[[^\]]+\]\([^)]+\)|https?://\S+)\s*$",
+            body,
+            re.IGNORECASE,
+        )
+        or re.match(r"^\d+(?:\.\d+)?\.?\s*$", body)
+    )
 
 
 def _looks_like_new_reference_line(stripped: str, raw_line: str) -> bool:
@@ -139,7 +177,7 @@ def _looks_like_new_reference_line(stripped: str, raw_line: str) -> bool:
         return True
 
     # Fallback for styles like "Surname et al. (2020) ..."
-    return bool(re.match(r"^[A-ZÀ-ÖØ-ÝŐŰ][^.!?]{0,100}\((?:19|20)\d{2}[a-z]?\)", stripped))
+    return bool(re.match(r"^[^\W\d_][^!?]{0,100}\((?:19|20)\d{2}[a-z]?\)", stripped, re.UNICODE))
 
 
 def _split_references(ref_block: str) -> list[str]:
@@ -264,19 +302,26 @@ def _extract_journal(text: str) -> str:
 
 def _parse_reference(raw_text: str) -> dict:
     """Parse a single reference string into a structured dict."""
-    doi_match = _DOI_RE.search(raw_text)
-    year_match = _YEAR_RE.search(raw_text)
+    cleaned_text = _repair_split_doi(raw_text)
+    doi_match = _DOI_RE.search(cleaned_text)
+    year_match = _YEAR_RE.search(cleaned_text)
     cleaned_doi = ""
     if doi_match:
-        cleaned_doi = doi_match.group(1).strip().strip("<>{}").rstrip(".,;:)]}'\"")
+        cleaned_doi = (
+            doi_match.group(1)
+            .replace(" ", "")
+            .strip()
+            .strip("<>{}")
+            .rstrip(".,;:)]}'\"")
+        )
 
     return {
-        "title": _extract_title(raw_text),
-        "authors": _extract_authors(raw_text),
+        "title": _extract_title(cleaned_text),
+        "authors": _extract_authors(cleaned_text),
         "year": year_match.group(1) if year_match else "",
         "doi": cleaned_doi,
-        "journal": _extract_journal(raw_text),
-        "raw_text": raw_text.strip(),
+        "journal": _extract_journal(cleaned_text),
+        "raw_text": cleaned_text.strip(),
     }
 
 
@@ -288,6 +333,54 @@ def extract_references(md_text: str) -> list[dict]:
 
     entries = _split_references(ref_section)
     return [_parse_reference(entry) for entry in entries]
+
+
+def _repair_split_doi(text: str) -> str:
+    cleaned = re.sub(
+        r"(https?://(?:dx\.)?doi\.org/)\s+",
+        r"\1",
+        text,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\bdoi:\s+", "doi:", cleaned, flags=re.IGNORECASE)
+
+    def _compact(match: re.Match[str]) -> str:
+        return match.group(0).replace(" ", "")
+
+    cleaned = re.sub(
+        r"10\.\d{4,}/[A-Za-z0-9._;()/:\-]+(?:\s+[A-Za-z0-9._;()/:\-]+)+",
+        _compact,
+        cleaned,
+    )
+    cleaned = re.sub(
+        r"https?://(?:dx\.)?doi\.org/[A-Za-z0-9._;()/:\-]+(?:\s+[A-Za-z0-9._;()/:\-]+)+",
+        _compact,
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned
+
+
+def _extract_references_from_pdf_text(pdf_path: Path) -> list[dict]:
+    try:
+        import pymupdf  # type: ignore
+    except ImportError:
+        return []
+
+    try:
+        doc = pymupdf.open(str(pdf_path))
+        pdf_text = "\n".join(page.get_text("text") for page in doc)
+        doc.close()
+    except Exception:
+        return []
+
+    ref_section = _find_references_section(pdf_text)
+    if not ref_section:
+        return []
+
+    entries = _split_references(ref_section)
+    parsed = [_parse_reference(entry) for entry in entries]
+    return [item for item in parsed if item.get("raw_text")]
 
 
 # ---------------------------------------------------------------------------
@@ -423,7 +516,7 @@ def convert_pdf(pdf_path: Path, output_dir: Optional[Path] = None) -> int:
     try:
         md_text: str = pymupdf4llm.to_markdown(
             str(pdf_path),
-            ignore_graphics=True,
+            ignore_graphics=False,
             page_separators=True,
             show_progress=False,
         )
@@ -463,6 +556,13 @@ def convert_pdf(pdf_path: Path, output_dir: Optional[Path] = None) -> int:
     # 6. Extract and write references
     # ------------------------------------------------------------------
     references = extract_references(md_text)
+    if len(references) < 3:
+        fallback_refs = _extract_references_from_pdf_text(pdf_path)
+        if len(fallback_refs) > len(references):
+            references = fallback_refs
+            print(
+                f"Reference fallback used (PDF-native parsing): {len(references)} entries"
+            )
     try:
         refs_path.write_text(
             json.dumps(references, indent=2, ensure_ascii=False) + "\n",
