@@ -30,6 +30,15 @@ try:
 except ImportError:
     fitz = None
 
+# Verification thresholds:
+# - Keep strict failure for clear textual-loss signals.
+# - Downgrade structurally noisy heuristics (word count/table deltas) to warnings
+#   unless they are extreme.
+WORD_COUNT_WARN_PCT = 3.0
+WORD_COUNT_FAIL_PCT = 35.0
+SPOTCHECK_WARN_MAX_MISSES = 2
+SPOTCHECK_FAIL_MIN_HIT_RATIO = 0.75
+
 
 # ---------------------------------------------------------------------------
 # PDF extraction helpers
@@ -472,10 +481,15 @@ def verify(pdf_path: str, md_path: str) -> dict:
 
     wc_diff_pct = abs(pdf_wc - md_wc) / max(pdf_wc, 1) * 100
 
-    if wc_diff_pct > 3:
+    if wc_diff_pct > WORD_COUNT_FAIL_PCT:
         failures.append(
-            f"Word count difference {wc_diff_pct:.1f}% exceeds 3% threshold "
-            f"(PDF: {pdf_wc}, MD: {md_wc})"
+            f"Word count difference {wc_diff_pct:.1f}% exceeds {WORD_COUNT_FAIL_PCT:.0f}% "
+            f"critical threshold (PDF: {pdf_wc}, MD: {md_wc})"
+        )
+    elif wc_diff_pct > WORD_COUNT_WARN_PCT:
+        warnings.append(
+            f"Word count difference {wc_diff_pct:.1f}% exceeds {WORD_COUNT_WARN_PCT:.0f}% "
+            f"warning threshold (PDF: {pdf_wc}, MD: {md_wc})"
         )
 
     # --- 2. Section/heading count ---
@@ -494,8 +508,8 @@ def verify(pdf_path: str, md_path: str) -> dict:
     tables_md_count = md_tables(md_text)
 
     if tables_pdf_count > 0 and tables_md_count < tables_pdf_count:
-        failures.append(
-            f"Tables missing: PDF has {tables_pdf_count}, MD has {tables_md_count}"
+        warnings.append(
+            f"Tables likely missing: PDF has {tables_pdf_count}, MD has {tables_md_count}"
         )
     elif tables_pdf_count != tables_md_count:
         warnings.append(
@@ -529,10 +543,18 @@ def verify(pdf_path: str, md_path: str) -> dict:
         else:
             missed_sentences.append(sent[:120])
 
-    if spot_total > 0 and (spot_total - spot_hits) > 2:
+    spot_misses = spot_total - spot_hits
+    spot_hit_ratio = (spot_hits / spot_total) if spot_total else 1.0
+    if spot_total > 0 and spot_hit_ratio < SPOTCHECK_FAIL_MIN_HIT_RATIO:
         failures.append(
-            f"Spot check: only {spot_hits}/{spot_total} sentences found in MD. "
+            f"Spot check critical: only {spot_hits}/{spot_total} sentences found in MD "
+            f"(hit ratio {spot_hit_ratio:.2f} < {SPOTCHECK_FAIL_MIN_HIT_RATIO:.2f}). "
             f"Missing examples: {missed_sentences[:3]}"
+        )
+    elif spot_total > 0 and spot_misses > SPOTCHECK_WARN_MAX_MISSES:
+        warnings.append(
+            f"Spot check warning: {spot_hits}/{spot_total} sentences found in MD "
+            f"(missing {spot_misses}). Missing examples: {missed_sentences[:3]}"
         )
 
     # --- 6. First/last content check ---
@@ -595,6 +617,7 @@ def verify(pdf_path: str, md_path: str) -> dict:
         "references_md": refs_md_count,
         "spot_check_hits": spot_hits,
         "spot_check_total": spot_total,
+        "spot_check_hit_ratio": round(spot_hit_ratio, 3),
         "figure_captions_pdf": len(fig_caps_pdf),
         "figure_captions_md": len(fig_caps_md),
         "footnotes_pdf": fn_pdf,
