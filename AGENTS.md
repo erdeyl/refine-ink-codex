@@ -35,8 +35,9 @@ This command performs setup and deterministic phases:
 1. Create review workspace under `reviews/`
 2. Convert PDF to Markdown (`pdf_to_markdown.py`)
 3. Verify conversion fidelity (`verify_conversion.py` logic)
-4. Verify references via CrossRef/OpenAlex/Semantic Scholar (`verify_references.py`)
-5. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
+4. Run manuscript consistency lint (`review_consistency_lint.py`) for internal logic checks
+5. Verify references via CrossRef/OpenAlex/Semantic Scholar (`verify_references.py`)
+6. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
 
 ## Manual Analysis Workflow (Codex)
 
@@ -74,6 +75,7 @@ Each review directory should include:
 - `input/original_converted.md`
 - `input/original_references.json`
 - `verification/original_verification.json`
+- `verification/consistency_lint_report.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json`
 - `agent_outputs/*.md`
