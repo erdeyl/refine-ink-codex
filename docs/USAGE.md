@@ -26,6 +26,14 @@ Optional flags:
 - `--skip-references`
 - `--s2-api-key ...`
 - `--force`
+- `--chunking chunked|no-chunk|pdf`
+- `--pdf-native-only`
+
+Three-mode orchestration (chunked + no-chunk + pdf-native/pdf-chunking):
+
+```bash
+python scripts/run_joint_workflow_review.py [path/to/paper.pdf] --force
+```
 
 ## 2. Inspect Generated Workspace
 
@@ -50,6 +58,9 @@ Key files:
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
 - `output/review_EN.md`
 - `output/manifest.json`
+- comparison runner outputs:
+  - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/workflow_comparison.md`
+  - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/joint_review.md`
 
 ## 3. Complete Analysis Passes
 

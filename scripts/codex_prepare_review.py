@@ -26,6 +26,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from pdf_to_markdown import EXIT_OK as CONVERT_OK
 from pdf_to_markdown import convert_pdf
+from pdf_to_markdown import extract_references_from_pdf
 from review_consistency_lint import lint_markdown
 from verify_conversion import verify as verify_conversion
 from verify_references import verify_all
@@ -53,6 +54,7 @@ AGENT_PASSES = [
 HEADING_RE = re.compile(r"^(#{1,3})\s+(.+?)\s*$")
 PDF_MAGIC = b"%PDF-"
 DEFAULT_PDF_SCAN_EXCLUDES = {".git", ".venv", "venv", "__pycache__", "legacy", "reviews"}
+CHUNKING_MODES = {"chunked", "no-chunk", "pdf"}
 
 
 def slugify(text: str) -> str:
@@ -153,6 +155,43 @@ def resolve_pdf_path(pdf_arg: str | None) -> Path:
         "multiple PDF candidates found in current directory; pass one explicitly:\n"
         f"{listed}"
     )
+
+
+def extract_pdf_native_text(pdf_path: Path) -> tuple[str, int]:
+    """Extract plain text directly from PDF pages without Markdown conversion."""
+    try:
+        import fitz  # pymupdf
+    except ImportError as exc:
+        raise RuntimeError("pymupdf is required for --pdf-native-only mode") from exc
+
+    doc = fitz.open(str(pdf_path))
+    pages: list[str] = []
+    for idx, page in enumerate(doc, start=1):
+        page_text = page.get_text("text").strip()
+        pages.append(f"## Page {idx}\n\n{page_text}\n")
+    page_count = doc.page_count
+    doc.close()
+
+    return "\n\n".join(pages).strip() + "\n", page_count
+
+
+def build_pdf_native_verification_report(pdf_path: Path, extracted_text: str, page_count: int) -> dict[str, Any]:
+    """Create a lightweight verification report for PDF-native extraction mode."""
+    pdf_words = count_words(extracted_text)
+    return {
+        "status": "PASS",
+        "mode": "pdf-native-only",
+        "page_count": page_count,
+        "pdf_word_count": pdf_words,
+        "md_word_count": pdf_words,
+        "word_count_diff_pct": 0.0,
+        "warnings": [],
+        "failures": [],
+        "notes": [
+            "Markdown conversion was skipped; workspace uses direct PDF text extraction.",
+        ],
+        "source_pdf": str(pdf_path),
+    }
 
 
 def detect_section_tags(heading: str, text: str) -> dict[str, bool]:
@@ -260,9 +299,78 @@ def _assign_dimensions(chunks: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def build_chunk_map(converted_md_path: Path) -> dict[str, Any]:
+def _single_chunk_assignments(chunk_id: str) -> dict[str, Any]:
+    return {
+        "math-logic": [chunk_id],
+        "notation": [[chunk_id]],
+        "exposition": [[chunk_id]],
+        "empirical": [chunk_id],
+        "cross-section": [[chunk_id]],
+        "econometrics": [chunk_id],
+        "literature": [chunk_id],
+        "references": [chunk_id],
+        "language": [[chunk_id]],
+    }
+
+
+def _pdf_chunk_heading(page_text: str, page_num: int) -> str:
+    for line in page_text.splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped[:120]
+    return f"Page {page_num}"
+
+
+def _build_pdf_chunk_map(pdf_path: Path) -> dict[str, Any]:
+    try:
+        import fitz  # pymupdf
+    except ImportError as exc:
+        raise RuntimeError("pymupdf is required for chunking mode 'pdf'") from exc
+
+    doc = fitz.open(str(pdf_path))
+    chunks: list[dict[str, Any]] = []
+    for page_idx, page in enumerate(doc, start=1):
+        page_text = page.get_text("text")
+        heading = _pdf_chunk_heading(page_text, page_idx)
+        line_count = max(1, len(page_text.splitlines()))
+        tags = detect_section_tags(heading, page_text)
+        chunks.append(
+            {
+                "id": f"p{page_idx}",
+                "heading": heading,
+                "level": 0,
+                "page_start": page_idx,
+                "page_end": page_idx,
+                "start_line": 1,
+                "end_line": line_count,
+                "words": count_words(page_text),
+                **tags,
+            }
+        )
+    doc.close()
+
+    return {
+        "total_chunks": len(chunks),
+        "chunks": chunks,
+        "dimension_assignments": _assign_dimensions(chunks),
+    }
+
+
+def build_chunk_map(
+    converted_md_path: Path,
+    chunking_mode: str = "chunked",
+    pdf_path: Path | None = None,
+) -> dict[str, Any]:
     text = converted_md_path.read_text(encoding="utf-8")
     lines = text.splitlines()
+
+    if chunking_mode not in CHUNKING_MODES:
+        raise ValueError(f"unsupported chunking mode: {chunking_mode}")
+
+    if chunking_mode == "pdf":
+        if pdf_path is None:
+            raise ValueError("pdf_path is required for chunking mode 'pdf'")
+        return _build_pdf_chunk_map(pdf_path)
 
     heading_rows: list[tuple[int, int, str]] = []
     for index, line in enumerate(lines, start=1):
@@ -277,6 +385,24 @@ def build_chunk_map(converted_md_path: Path) -> dict[str, Any]:
             "total_chunks": 0,
             "chunks": [],
             "dimension_assignments": _assign_dimensions([]),
+        }
+
+    if chunking_mode == "no-chunk":
+        section_text = "\n".join(lines)
+        tags = detect_section_tags("Document", section_text)
+        single = {
+            "id": "c1",
+            "heading": "Document",
+            "level": 0,
+            "start_line": 1,
+            "end_line": len(lines),
+            "words": count_words(section_text),
+            **tags,
+        }
+        return {
+            "total_chunks": 1,
+            "chunks": [single],
+            "dimension_assignments": _single_chunk_assignments("c1"),
         }
 
     chunks: list[dict[str, Any]] = []
@@ -395,6 +521,8 @@ def next_steps_template(
     review_dir: Path,
     ref_summary: dict[str, int],
     lint_summary: dict[str, Any],
+    source_mode: str,
+    chunking_mode: str,
 ) -> str:
     return f"""# Next Steps (Codex)
 
@@ -406,6 +534,8 @@ Review workspace is ready at:
 
 - Conversion + verification completed
 - Reference verification completed
+- Source mode: `{source_mode}`
+- Chunking mode: `{chunking_mode}`
 - Consistency lint: {lint_summary['status']} ({lint_summary['finding_count']} findings)
 - Chunk map generated at `chunks/chunk_map.json` (`total_chunks`, `chunks`, `dimension_assignments`)
 - References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable
@@ -479,29 +609,59 @@ def prepare_review(args: argparse.Namespace) -> int:
     original_pdf = input_dir / "original.pdf"
     shutil.copy2(pdf_path, original_pdf)
 
-    print(f"[1/5] Converting PDF: {original_pdf}")
-    convert_code = convert_pdf(original_pdf, input_dir)
-    if convert_code != CONVERT_OK:
-        return EXIT_CONVERSION_ERROR
+    source_mode = "pdf-native-only" if args.pdf_native_only else "markdown-conversion"
+    chunking_mode = args.chunking
+    if chunking_mode not in CHUNKING_MODES:
+        print(f"Error: unsupported chunking mode '{chunking_mode}'", file=sys.stderr)
+        return EXIT_INPUT_ERROR
 
+    references: list[dict[str, Any]]
     converted_md = input_dir / "original_converted.md"
     references_json = input_dir / "original_references.json"
-
-    if not converted_md.exists() or not references_json.exists():
-        print("Error: expected conversion outputs were not created.", file=sys.stderr)
-        return EXIT_CONVERSION_ERROR
-
-    print(f"[2/5] Verifying conversion: {converted_md.name}")
-    try:
-        conversion_report = verify_conversion(str(original_pdf), str(converted_md))
-    except Exception as exc:
-        print(f"Error during conversion verification: {exc}", file=sys.stderr)
-        return EXIT_VERIFICATION_FAIL
-
     conversion_report_path = verification_dir / "original_verification.json"
-    write_json(conversion_report_path, conversion_report)
 
-    if conversion_report.get("status") == "FAIL":
+    if source_mode == "pdf-native-only":
+        print(f"[1/5] Extracting PDF text natively: {original_pdf}")
+        try:
+            native_md_text, page_count = extract_pdf_native_text(original_pdf)
+        except Exception as exc:
+            print(f"Error during PDF-native extraction: {exc}", file=sys.stderr)
+            return EXIT_CONVERSION_ERROR
+
+        converted_md.write_text(native_md_text, encoding="utf-8")
+        references = extract_references_from_pdf(original_pdf)
+        write_json(references_json, references)
+        conversion_report = build_pdf_native_verification_report(
+            original_pdf,
+            native_md_text,
+            page_count,
+        )
+    else:
+        print(f"[1/5] Converting PDF: {original_pdf}")
+        convert_code = convert_pdf(original_pdf, input_dir)
+        if convert_code != CONVERT_OK:
+            return EXIT_CONVERSION_ERROR
+
+        if not converted_md.exists() or not references_json.exists():
+            print("Error: expected conversion outputs were not created.", file=sys.stderr)
+            return EXIT_CONVERSION_ERROR
+
+        print(f"[2/5] Verifying conversion: {converted_md.name}")
+        try:
+            conversion_report = verify_conversion(str(original_pdf), str(converted_md))
+        except Exception as exc:
+            print(f"Error during conversion verification: {exc}", file=sys.stderr)
+            return EXIT_VERIFICATION_FAIL
+
+        with references_json.open("r", encoding="utf-8") as f:
+            loaded_refs = json.load(f)
+        if not isinstance(loaded_refs, list):
+            print("Error: references JSON is not a list.", file=sys.stderr)
+            return EXIT_REFERENCE_ERROR
+        references = loaded_refs
+
+    write_json(conversion_report_path, conversion_report)
+    if source_mode != "pdf-native-only" and conversion_report.get("status") == "FAIL":
         print(
             f"Conversion verification failed. See: {conversion_report_path}",
             file=sys.stderr,
@@ -509,13 +669,6 @@ def prepare_review(args: argparse.Namespace) -> int:
         return EXIT_VERIFICATION_FAIL
 
     print(f"[3/5] Verifying references: {references_json.name}")
-    with references_json.open("r", encoding="utf-8") as f:
-        references = json.load(f)
-
-    if not isinstance(references, list):
-        print("Error: references JSON is not a list.", file=sys.stderr)
-        return EXIT_REFERENCE_ERROR
-
     reference_results: list[dict[str, Any]] = []
     if references and not args.skip_references:
         try:
@@ -537,7 +690,7 @@ def prepare_review(args: argparse.Namespace) -> int:
     ref_summary = summarize_reference_results(reference_results)
 
     print("[4/5] Building chunk map, consistency lint, and agent stubs")
-    chunk_map = build_chunk_map(converted_md)
+    chunk_map = build_chunk_map(converted_md, chunking_mode=chunking_mode, pdf_path=original_pdf)
     chunk_map_path = chunks_dir / "chunk_map.json"
     write_json(chunk_map_path, chunk_map)
 
@@ -557,7 +710,7 @@ def prepare_review(args: argparse.Namespace) -> int:
 
     next_steps_path = review_dir / "NEXT_STEPS.md"
     next_steps_path.write_text(
-        next_steps_template(review_dir, ref_summary, lint_summary),
+        next_steps_template(review_dir, ref_summary, lint_summary, source_mode, chunking_mode),
         encoding="utf-8",
     )
 
@@ -570,10 +723,12 @@ def prepare_review(args: argparse.Namespace) -> int:
             "slug": paper_slug,
         },
         "conversion": {
+            "mode": source_mode,
             "status": conversion_report.get("status"),
             "report_path": str(conversion_report_path),
         },
         "chunking": {
+            "mode": chunking_mode,
             "chunk_map_path": str(chunk_map_path),
             "total_chunks": chunk_map.get("total_chunks", 0),
         },
@@ -597,6 +752,8 @@ def prepare_review(args: argparse.Namespace) -> int:
 
     print("\nReview workspace prepared.")
     print(f"  Directory: {review_dir}")
+    print(f"  Source mode: {source_mode}")
+    print(f"  Chunking mode: {chunking_mode}")
     print(f"  Conversion: {conversion_report.get('status')}")
     print(
         "  References: "
@@ -642,6 +799,17 @@ def parse_args() -> argparse.Namespace:
         "--force",
         action="store_true",
         help="Allow reuse of existing review directory name",
+    )
+    parser.add_argument(
+        "--chunking",
+        choices=sorted(CHUNKING_MODES),
+        default="chunked",
+        help="Chunking strategy for analysis scaffold (default: chunked)",
+    )
+    parser.add_argument(
+        "--pdf-native-only",
+        action="store_true",
+        help="Skip PDF->Markdown conversion and use direct PDF text extraction.",
     )
     return parser.parse_args()
 

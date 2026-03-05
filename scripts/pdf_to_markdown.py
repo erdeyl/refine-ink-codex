@@ -383,6 +383,11 @@ def _extract_references_from_pdf_text(pdf_path: Path) -> list[dict]:
     return [item for item in parsed if item.get("raw_text")]
 
 
+def extract_references_from_pdf(pdf_path: Path) -> list[dict]:
+    """Public helper: extract structured references directly from PDF text."""
+    return _extract_references_from_pdf_text(pdf_path)
+
+
 # ---------------------------------------------------------------------------
 # Conversion statistics
 # ---------------------------------------------------------------------------
