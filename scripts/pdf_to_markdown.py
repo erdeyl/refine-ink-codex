@@ -83,6 +83,18 @@ _AUTHOR_YEAR_START_RE = re.compile(
     r"^[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+(?:\s+[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+){0,2},"
 )
 
+_NUMBERED_HEADING_RE = re.compile(r"^(\d+(?:\.\d+)*)\.\s+(.+?)\s*$")
+_PLAIN_HEADING_RE = re.compile(
+    r"^(Abstract|Introduction|Literature(?:\s+background)?|Materials\s+and\s+methods|Methods|"
+    r"Results|Discussion|Conclusions?|References|Bibliography|Appendix)\s*$",
+    re.IGNORECASE,
+)
+_INSTITUTIONAL_REF_START_RE = re.compile(
+    r"^(OECD(?:/European Commission)?|World Health Organization|World Bank|Eurostat|"
+    r"European Institute for Gender Equality)\s*\(",
+    re.IGNORECASE,
+)
+
 
 def _find_references_section(md_text: str) -> Optional[str]:
     """Return the raw text of the references section, or None."""
@@ -139,15 +151,16 @@ def _split_references(ref_block: str) -> list[str]:
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            # Blank line -> flush current entry
-            if current:
-                entries.append(" ".join(current))
-                current = []
+            # Ignore blank lines. PDFs often insert empty lines between wrapped
+            # lines of the same reference entry.
             continue
 
         # Split on explicit numbered markers and author-year new-entry cues.
         if current and _looks_like_new_reference_line(stripped, line):
             entries.append(" ".join(current))
+            current = []
+        elif not current:
+            # Start first entry or recover from empty state.
             current = []
 
         current.append(stripped)
@@ -155,7 +168,36 @@ def _split_references(ref_block: str) -> list[str]:
     if current:
         entries.append(" ".join(current))
 
-    return [e for e in entries if len(e) > 15]  # discard very short fragments
+    # Some converters may concatenate multiple references into one physical line.
+    # Split conservatively at sentence boundaries before a likely reference start.
+    split_candidates: list[str] = []
+    boundary_re = re.compile(
+        r"(?<=\.)\s+(?=("
+        r"[A-ZÀ-ÖØ-ÝŐŰ][A-Za-zÀ-ÖØ-öø-ÿŐőŰű'’\-]+,\s+[A-ZÀ-ÖØ-ÝŐŰ]"
+        r"|OECD(?:/European Commission)?\s*\("
+        r"|World Health Organization\s*\("
+        r"|World Bank\s*\("
+        r"|Eurostat\s*\("
+        r"|European Institute for Gender Equality\s*\("
+        r"))"
+    )
+    for entry in entries:
+        parts = [p.strip() for p in boundary_re.split(entry) if p.strip()]
+        split_candidates.extend(parts)
+
+    # Merge obvious continuation fragments back to the previous reference.
+    merged: list[str] = []
+    for entry in split_candidates:
+        starts_new = bool(_AUTHOR_YEAR_START_RE.match(entry) or _INSTITUTIONAL_REF_START_RE.match(entry))
+        if not merged:
+            merged.append(entry)
+            continue
+        if starts_new:
+            merged.append(entry)
+            continue
+        merged[-1] = f"{merged[-1]} {entry}"
+
+    return [e for e in merged if len(e) > 15]  # discard very short fragments
 
 
 def _extract_authors(text: str) -> str:
@@ -269,6 +311,55 @@ def _compute_stats(md_text: str, page_count: int) -> dict:
     }
 
 
+def _should_promote_heading(lines: list[str], idx: int, stripped: str) -> bool:
+    if len(stripped) > 120:
+        return False
+    prev_blank = idx == 0 or not lines[idx - 1].strip()
+    next_blank = idx == len(lines) - 1 or not lines[idx + 1].strip()
+    return prev_blank or next_blank
+
+
+def _heading_level_from_number(number: str) -> int:
+    # 1. -> ##, 2.1. -> ###, 3.1.2. -> ####
+    depth = number.count(".") + 1
+    return min(4, depth + 1)
+
+
+def _recover_markdown_headings(md_text: str) -> str:
+    """Promote plain numbered section titles to Markdown headings."""
+    lines = md_text.splitlines()
+    recovered: list[str] = []
+
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            recovered.append("")
+            continue
+
+        # Keep headings emitted by converter.
+        if re.match(r"^#{1,6}\s+", stripped):
+            recovered.append(stripped)
+            continue
+
+        if _should_promote_heading(lines, idx, stripped):
+            numbered = _NUMBERED_HEADING_RE.match(stripped)
+            if numbered:
+                number = numbered.group(1)
+                title = numbered.group(2)
+                if re.search(r"[A-Za-zÀ-ÖØ-öø-ÿŐőŰű]", title):
+                    level = _heading_level_from_number(number)
+                    recovered.append(f"{'#' * level} {number}. {title}")
+                    continue
+
+            if _PLAIN_HEADING_RE.match(stripped):
+                recovered.append(f"## {stripped}")
+                continue
+
+        recovered.append(line.rstrip())
+
+    return "\n".join(recovered)
+
+
 def _print_stats(stats: dict) -> None:
     print("\n--- Conversion Statistics ---")
     print(f"  Pages:    {stats['pages']}")
@@ -332,6 +423,8 @@ def convert_pdf(pdf_path: Path, output_dir: Optional[Path] = None) -> int:
     try:
         md_text: str = pymupdf4llm.to_markdown(
             str(pdf_path),
+            ignore_graphics=True,
+            page_separators=True,
             show_progress=False,
         )
     except Exception as exc:
@@ -349,6 +442,8 @@ def convert_pdf(pdf_path: Path, output_dir: Optional[Path] = None) -> int:
     # ------------------------------------------------------------------
     # 4. Post-process: light clean-up
     # ------------------------------------------------------------------
+    md_text = re.sub(r"^\s*---\s*end of page=\d+\s*---\s*$", "", md_text, flags=re.MULTILINE)
+    md_text = _recover_markdown_headings(md_text)
     # Collapse runs of 3+ blank lines into 2
     md_text = re.sub(r"\n{4,}", "\n\n\n", md_text)
     # Strip trailing whitespace on each line

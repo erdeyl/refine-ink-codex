@@ -9,6 +9,7 @@
 ## What This Repo Provides
 
 - Deterministic preprocessing of academic PDFs (PDF -> Markdown + conversion checks)
+- Rule-based manuscript consistency lint to flag common internal-logic issues early
 - Reference verification against CrossRef, OpenAlex, and Semantic Scholar
 - Codex-ready review workspace scaffolding (`chunks`, `agent_outputs`, `output`)
 - Structured report and manifest templates for reproducible audits
@@ -57,6 +58,7 @@ Each prepared review contains:
 - `input/original_converted.md`
 - `input/original_references.json`
 - `verification/original_verification.json`
+- `verification/consistency_lint_report.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
 - `agent_outputs/*.md` (scaffolded)

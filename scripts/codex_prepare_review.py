@@ -26,6 +26,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from pdf_to_markdown import EXIT_OK as CONVERT_OK
 from pdf_to_markdown import convert_pdf
+from review_consistency_lint import lint_markdown
 from verify_conversion import verify as verify_conversion
 from verify_references import verify_all
 
@@ -77,6 +78,15 @@ def summarize_reference_results(results: list[dict[str, Any]]) -> dict[str, int]
         "verified": verified,
         "suspicious": suspicious,
         "unverifiable": unverifiable,
+    }
+
+
+def summarize_lint_report(report: dict[str, Any]) -> dict[str, Any]:
+    finding_count = report.get("finding_count", 0)
+    status = report.get("status", "UNKNOWN")
+    return {
+        "status": status,
+        "finding_count": finding_count,
     }
 
 
@@ -381,7 +391,11 @@ def review_template(paper_title: str, review_dir: Path, verification_status: str
 """
 
 
-def next_steps_template(review_dir: Path, ref_summary: dict[str, int]) -> str:
+def next_steps_template(
+    review_dir: Path,
+    ref_summary: dict[str, int],
+    lint_summary: dict[str, Any],
+) -> str:
     return f"""# Next Steps (Codex)
 
 Review workspace is ready at:
@@ -392,6 +406,7 @@ Review workspace is ready at:
 
 - Conversion + verification completed
 - Reference verification completed
+- Consistency lint: {lint_summary['status']} ({lint_summary['finding_count']} findings)
 - Chunk map generated at `chunks/chunk_map.json` (`total_chunks`, `chunks`, `dimension_assignments`)
 - References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable
 
@@ -425,6 +440,7 @@ python scripts/md_to_html.py {review_dir}/output/review_EN.md
 ## Evidence discipline
 
 - Quote exact source text from `input/original_converted.md`
+- Review `verification/consistency_lint_report.json` and resolve/confirm each flagged issue
 - Assign severity and confidence per finding
 - Keep unverifiable claims in low-confidence appendix
 """
@@ -520,10 +536,16 @@ def prepare_review(args: argparse.Namespace) -> int:
     write_json(reference_report_path, reference_results)
     ref_summary = summarize_reference_results(reference_results)
 
-    print("[4/5] Building chunk map and agent stubs")
+    print("[4/5] Building chunk map, consistency lint, and agent stubs")
     chunk_map = build_chunk_map(converted_md)
     chunk_map_path = chunks_dir / "chunk_map.json"
     write_json(chunk_map_path, chunk_map)
+
+    lint_report = lint_markdown(converted_md.read_text(encoding="utf-8"))
+    lint_report_path = verification_dir / "consistency_lint_report.json"
+    write_json(lint_report_path, lint_report)
+    lint_summary = summarize_lint_report(lint_report)
+
     write_agent_output_stubs(agent_outputs_dir)
 
     print("[5/5] Writing scaffold outputs")
@@ -534,7 +556,10 @@ def prepare_review(args: argparse.Namespace) -> int:
     )
 
     next_steps_path = review_dir / "NEXT_STEPS.md"
-    next_steps_path.write_text(next_steps_template(review_dir, ref_summary), encoding="utf-8")
+    next_steps_path.write_text(
+        next_steps_template(review_dir, ref_summary, lint_summary),
+        encoding="utf-8",
+    )
 
     manifest = {
         "version": "codex-1.0",
@@ -556,6 +581,10 @@ def prepare_review(args: argparse.Namespace) -> int:
             **ref_summary,
             "report_path": str(reference_report_path),
         },
+        "consistency_lint": {
+            **lint_summary,
+            "report_path": str(lint_report_path),
+        },
         "outputs": {
             "review_markdown": str(review_en_path),
             "next_steps": str(next_steps_path),
@@ -574,6 +603,10 @@ def prepare_review(args: argparse.Namespace) -> int:
         f"{ref_summary['verified']} verified, "
         f"{ref_summary['suspicious']} suspicious, "
         f"{ref_summary['unverifiable']} unverifiable"
+    )
+    print(
+        "  Consistency lint: "
+        f"{lint_summary['status']} ({lint_summary['finding_count']} findings)"
     )
     print(f"  Next steps: {next_steps_path}")
     return EXIT_OK
