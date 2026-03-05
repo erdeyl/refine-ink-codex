@@ -48,6 +48,10 @@ def _add(
     )
 
 
+def _has_any(text: str, patterns: list[str], flags: int = re.IGNORECASE | re.DOTALL) -> bool:
+    return any(re.search(pattern, text, flags) for pattern in patterns)
+
+
 def lint_markdown(md_text: str) -> dict[str, Any]:
     lines = md_text.splitlines()
     text = md_text
@@ -217,6 +221,407 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
             _line_number(lines, r"only in isolated years"),
             "Claim strength may exceed what a plotted series visually supports.",
             "Either quantify with exact counts/years or soften to descriptive language.",
+        )
+
+    # C12: potential boolean/syntax issue in Scopus query reporting.
+    if re.search(r"TITLE-ABS-KEY\s*\(effect\)\)", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C12",
+            "Search query syntax appears malformed",
+            "Major",
+            95,
+            _line_number(lines, r"TITLE-ABS-KEY\s*\(effect\)\)"),
+            "Reported query includes an extra closing parenthesis near the Scopus expression.",
+            "Report the exact executed query with validated syntax and explicit boolean grouping.",
+        )
+
+    # C13: estimator/model taxonomy ambiguity for PPML.
+    if _has_any(
+        flat,
+        [
+            r"third category is Poisson Pseudo Maximum Likelihood",
+            r"structural gravity model with the PPML method",
+        ],
+    ):
+        _add(
+            findings,
+            "C13",
+            "PPML is mixed with model-class taxonomy",
+            "Minor",
+            86,
+            _line_number(lines, r"Poisson Pseudo Maximum Likelihood"),
+            "PPML is presented as a standalone model category while examples describe gravity estimated via PPML.",
+            "Separate model families, identification designs, and estimation techniques in the methods taxonomy.",
+        )
+
+    # C14: stage-label inconsistency in periodization narrative.
+    if _has_any(
+        flat,
+        [
+            r"four stages:\s*early stages,\s*infancy,\s*development,\s*and maturity",
+            r"In the early days",
+            r"In the early stages",
+        ],
+    ):
+        _add(
+            findings,
+            "C14",
+            "Periodization labels are not used consistently",
+            "Minor",
+            82,
+            _line_number(lines, r"four stages:\s*early stages,\s*infancy,\s*development,\s*and maturity"),
+            "Defined stages and section topic sentences use partially overlapping labels.",
+            "Use the same stage names consistently in headings and narrative transitions.",
+        )
+
+    # C15: citation appears across conflicting stage classifications.
+    if _has_any(flat, [r"Centralization.*Elsig\s*&\s*Klotz,\s*2022", r"Maturity.*Elsig\s*&\s*Klotz,\s*2022"]):
+        _add(
+            findings,
+            "C15",
+            "Stage assignment of the same citation is ambiguous",
+            "Minor",
+            84,
+            _line_number(lines, r"Elsig\s*&\s*Klotz,\s*2022"),
+            "The same citation is used under different stage labels without explicit assignment logic.",
+            "State whether stage assignment reflects study period, mechanism, or narrative placement.",
+        )
+
+    # C16: likely terminology inversion for data-flow clauses.
+    if re.search(r"data-free flow clauses", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C16",
+            "Terminology likely inverts intended data-flow concept",
+            "Major",
+            92,
+            _line_number(lines, r"data-free flow clauses"),
+            "The phrase can be interpreted as 'flow without data' instead of 'free flow of data'.",
+            "Use unambiguous terms such as 'free flow of data clauses' or 'cross-border data flow clauses'.",
+        )
+
+    # C17: unresolved antecedent in bilateral statement.
+    if re.search(r"between the two countries", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C17",
+            "Definite bilateral reference lacks explicit antecedent",
+            "Minor",
+            76,
+            _line_number(lines, r"between the two countries"),
+            "The phrase can imply a specific pair not previously named in that paragraph.",
+            "Use 'partner countries' or 'country pairs' unless a specific dyad is explicitly introduced.",
+        )
+
+    # C18: nonstandard economic term.
+    if re.search(r"distribution of regular income", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C18",
+            "Nonstandard term may obscure intended welfare concept",
+            "Minor",
+            90,
+            _line_number(lines, r"distribution of regular income"),
+            "The phrase is uncommon in this context and may be a translation artifact.",
+            "Replace with a specific concept such as value-added distribution, welfare gains, or benefit distribution.",
+        )
+
+    # C19: nonstandard econometric wording.
+    if re.search(r"interactive items", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C19",
+            "Interaction-term terminology is imprecise",
+            "Minor",
+            88,
+            _line_number(lines, r"interactive items"),
+            "The phrase is likely intended to describe interaction terms/effects in moderation analysis.",
+            "Use standard wording such as 'interaction terms' or 'interaction effects'.",
+        )
+
+    # C20: chronological phrasing mismatch in report-year claim.
+    if re.search(r"Report 2025 indicates.*expected to increase.*to .*2024", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C20",
+            "Chronology in report-year statement is unclear",
+            "Minor",
+            80,
+            _line_number(lines, r"Report 2025 indicates"),
+            "A 2025 report is cited for a statement phrased as an expectation about 2024.",
+            "Clarify whether 2024 is forecast, estimate, or observed value and include full source metadata.",
+        )
+
+    # C21: unresolved deictic phrase in methods narrative.
+    if re.search(r"these mechanisms", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C21",
+            "Unclear antecedent for 'these mechanisms'",
+            "Minor",
+            72,
+            _line_number(lines, r"these mechanisms"),
+            "The expression appears before a concrete mechanism list is fully anchored.",
+            "Name the mechanism family explicitly where first introduced.",
+        )
+
+    # C22: common template artifact from medical review language.
+    if re.search(r"The patients were screened", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C22",
+            "Template artifact: non-document unit in screening section",
+            "Major",
+            99,
+            _line_number(lines, r"The patients were screened"),
+            "Screening units are articles/records, not patients.",
+            "Replace with 'records were screened' or equivalent PRISMA terminology.",
+        )
+
+    # C23: likely moderation wording drift.
+    if re.search(r"financial development may play a regulatory role", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C23",
+            "Regulatory vs moderating role terminology is ambiguous",
+            "Minor",
+            85,
+            _line_number(lines, r"financial development may play a regulatory role"),
+            "In methods context, 'regulatory role' can be read as policy regulation rather than moderation.",
+            "Use 'moderating role/effect' when referring to interaction-based empirical analysis.",
+        )
+
+    # C24: connector mismatch in limitations paragraph.
+    if (
+        re.search(r"On the one hand", flat, re.IGNORECASE)
+        and re.search(r"On the other hand", flat, re.IGNORECASE) is None
+        and re.search(r"On the one hand.{0,240}However", flat, re.IGNORECASE | re.DOTALL)
+    ):
+        _add(
+            findings,
+            "C24",
+            "Limitation paragraph uses disjointed connectors",
+            "Minor",
+            83,
+            _line_number(lines, r"On the one hand"),
+            "Contrastive markers are used without a clear paired structure.",
+            "Use parallel connector structure or list limitations directly without contrastive markers.",
+        )
+
+    # C25: redundant phrase in GVC mechanism sentence.
+    if re.search(r"division of the GVC division of labor", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C25",
+            "Redundant wording in GVC mechanism statement",
+            "Minor",
+            96,
+            _line_number(lines, r"division of the GVC division of labor"),
+            "The phrase duplicates 'division' and reduces readability.",
+            "Rewrite as 'deepening GVC specialization' or equivalent precise wording.",
+        )
+
+    # C26: unclear contribution phrasing in comparative-study statement.
+    if re.search(r"provides a reference for the .*Digital Partnership Agreement", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C26",
+            "Contribution phrasing is imprecise",
+            "Minor",
+            78,
+            _line_number(lines, r"provides a reference for"),
+            "The phrase can imply documentary authority rather than analytical implication.",
+            "Use 'offers implications for' or 'provides analytical insight for' in comparative-method context.",
+        )
+
+    # C27: contrastive marker weakens section transition.
+    if re.search(r"no longer limited to .* However, it has evolved", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C27",
+            "Contrastive transition is likely unnecessary",
+            "Minor",
+            77,
+            _line_number(lines, r"no longer limited to"),
+            "The transition describes progression, but uses a contrastive connector.",
+            "Use a progressive connector (or no connector) to improve logical flow.",
+        )
+
+    # C28: strong effect synthesis without explicit evidence appraisal framework.
+    has_prisma = re.search(r"\bPRISMA\b", flat, re.IGNORECASE) is not None
+    has_strong_effect_language = _has_any(
+        flat,
+        [
+            r"\bsignificant(?:ly)?\b",
+            r"\bpromote(?:s|d)?\b",
+            r"\benhance(?:s|d)?\b",
+            r"\beffectively reduce\b",
+            r"\bplayed a crucial role\b",
+        ],
+    )
+    has_appraisal_framework = _has_any(
+        flat,
+        [
+            r"risk of bias",
+            r"quality appraisal",
+            r"quality assessment",
+            r"evidence grading",
+            r"identification strategy",
+            r"endogeneity",
+            r"study quality",
+        ],
+    )
+    if has_prisma and has_strong_effect_language and not has_appraisal_framework:
+        _add(
+            findings,
+            "C28",
+            "Effect synthesis lacks explicit appraisal framework",
+            "Major",
+            89,
+            _line_number(lines, r"PRISMA"),
+            "Directional effect claims are aggregated without documented quality/risk-of-bias grading.",
+            "Add an evidence-appraisal framework and tie synthesis strength to study-level evidentiary quality.",
+        )
+
+    # C29: article-only eligibility conflicts with non-article sample markers.
+    has_article_only_exclusion = re.search(r"Research other than articles", flat, re.IGNORECASE) is not None
+    has_non_article_markers = _has_any(
+        flat,
+        [
+            r"Handbook",
+            r"\(pp\.\s*\d+\s*[-–]\s*\d+\)",
+            r"Cambridge University Press",
+            r"Springer",
+            r"Research Paper",
+            r"World Economy Brief",
+            r"Heinrich-B[öo]ll",
+        ],
+    )
+    if has_article_only_exclusion and has_non_article_markers:
+        _add(
+            findings,
+            "C29",
+            "Eligibility rule conflicts with realized corpus composition",
+            "Major",
+            96,
+            _line_number(lines, r"Research other than articles"),
+            "The review states non-article exclusion but includes clear non-journal source markers.",
+            "Either broaden eligibility criteria explicitly or enforce article-only inclusion consistently.",
+        )
+
+    # C30: global inference likely overreaches a heavily single-source corpus.
+    if re.search(r"Google Scholar returned\s*48", flat, re.IGNORECASE) and _has_any(
+        flat,
+        [
+            r"global network",
+            r"global governance",
+            r"multi-?polar",
+            r"global digital trade",
+        ],
+    ):
+        _add(
+            findings,
+            "C30",
+            "Global inference may overreach skewed retrieval base",
+            "Major",
+            84,
+            _line_number(lines, r"Google Scholar returned\s*48"),
+            "The corpus is highly concentrated in one database while conclusions are framed as global.",
+            "Calibrate inference scope to corpus composition or rebalance retrieval strategy.",
+        )
+
+    # C31: operational definition gap for key construct in multi-RQ review.
+    if (
+        re.search(r"digital trade rules", flat, re.IGNORECASE)
+        and re.search(r"\bRQ1\b", flat, re.IGNORECASE)
+        and re.search(r"\bRQ2\b", flat, re.IGNORECASE)
+        and re.search(r"digital trade rules.{0,160}\bdefined as\b", flat, re.IGNORECASE | re.DOTALL) is None
+    ):
+        _add(
+            findings,
+            "C31",
+            "Operational definition for core construct appears underspecified",
+            "Major",
+            78,
+            _line_number(lines, r"RQ1"),
+            "The review spans multiple rule families but does not clearly state a bounded definition pattern.",
+            "Define the unit of analysis and hierarchy of rule families before RQ synthesis.",
+        )
+
+    # C32: keyword-network evidence may be conflated with geopolitical network claims.
+    if _has_any(flat, [r"VOSviewer", r"keyword co-occurrence"]) and _has_any(
+        flat,
+        [r"U\.S\.-centered", r"multi-centered", r"network pattern"],
+    ):
+        _add(
+            findings,
+            "C32",
+            "Keyword network may be conflated with rule-diffusion network",
+            "Major",
+            80,
+            _line_number(lines, r"VOSviewer"),
+            "Term co-occurrence maps and geopolitical rule-diffusion claims are distinct evidentiary objects.",
+            "Explicitly separate bibliometric term-network evidence from institutional/geopolitical network claims.",
+        )
+
+    # C33: coding-protocol transparency gap in systematic synthesis.
+    if re.search(r"coded the selected literature individually", flat, re.IGNORECASE) and _has_any(
+        flat,
+        [r"codebook", r"coding protocol", r"inter-rater", r"cross-check", r"double-cod"],
+    ) is False:
+        _add(
+            findings,
+            "C33",
+            "Coding protocol is underspecified for reproducible synthesis",
+            "Major",
+            87,
+            _line_number(lines, r"coded the selected literature individually"),
+            "Coding is mentioned, but extraction forms and coder-consistency procedures are not documented.",
+            "Add coding rulebook details, assignment criteria, and coder-consistency procedure reporting.",
+        )
+
+    # C34: inconsistent field-scope mechanics across databases.
+    if _has_any(flat, [r"anywhere in the article", r"TITLE-ABS-KEY", r"\(Topic\)"]):
+        _add(
+            findings,
+            "C34",
+            "Database field scopes appear inconsistent",
+            "Major",
+            90,
+            _line_number(lines, r"anywhere in the article|TITLE-ABS-KEY|\(Topic\)"),
+            "Search protocol mixes broad full-text-like scope with title/abstract/topic-constrained scopes.",
+            "Harmonize field restrictions across databases or explicitly justify asymmetry and its implications.",
+        )
+
+    # C35: ambiguous mechanism statement around ICT-gap narrowing.
+    if re.search(
+        r"constraints by narrowing the gap in information and communication technology",
+        flat,
+        re.IGNORECASE,
+    ):
+        _add(
+            findings,
+            "C35",
+            "Mechanism wording is logically ambiguous",
+            "Minor",
+            84,
+            _line_number(lines, r"narrowing the gap in information and communication technology"),
+            "The sentence links narrowing a gap to stronger constraints without clarifying the mechanism.",
+            "Specify the gap definition and causal pathway (e.g., harmonization, compliance burden, policy-space loss).",
+        )
+
+    # C36: tense/aspect inconsistency in staged-evolution summary.
+    if re.search(r"has been stagnant.*Later, it gradually transitioned", flat, re.IGNORECASE):
+        _add(
+            findings,
+            "C36",
+            "Tense/aspect shift blurs chronology in stage summary",
+            "Minor",
+            79,
+            _line_number(lines, r"has been stagnant"),
+            "Present-perfect and simple-past are mixed in a way that obscures whether stagnation is ongoing or prior-phase.",
+            "Align tense/aspect consistently across stage descriptions.",
         )
 
     status = "PASS" if not findings else "WARN"
