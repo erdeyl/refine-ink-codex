@@ -157,7 +157,7 @@ def resolve_pdf_path(pdf_arg: str | None) -> Path:
     )
 
 
-def extract_pdf_native_text(pdf_path: Path) -> tuple[str, int]:
+def extract_pdf_native_text(pdf_path: Path) -> tuple[str, int, int, int]:
     """Extract plain text directly from PDF pages without Markdown conversion."""
     try:
         import fitz  # pymupdf
@@ -166,31 +166,75 @@ def extract_pdf_native_text(pdf_path: Path) -> tuple[str, int]:
 
     doc = fitz.open(str(pdf_path))
     pages: list[str] = []
+    total_words = 0
+    nonempty_pages = 0
     for idx, page in enumerate(doc, start=1):
         page_text = page.get_text("text").strip()
+        page_words = count_words(page_text)
+        total_words += page_words
+        if page_words > 0:
+            nonempty_pages += 1
         pages.append(f"## Page {idx}\n\n{page_text}\n")
     page_count = doc.page_count
     doc.close()
 
-    return "\n\n".join(pages).strip() + "\n", page_count
+    return "\n\n".join(pages).strip() + "\n", page_count, total_words, nonempty_pages
 
 
-def build_pdf_native_verification_report(pdf_path: Path, extracted_text: str, page_count: int) -> dict[str, Any]:
+def build_pdf_native_verification_report(
+    pdf_path: Path,
+    extracted_text: str,
+    page_count: int,
+    extracted_word_count: int,
+    nonempty_pages: int,
+) -> dict[str, Any]:
     """Create a lightweight verification report for PDF-native extraction mode."""
-    pdf_words = count_words(extracted_text)
+    warnings: list[str] = []
+    failures: list[str] = []
+    nonempty_ratio = (nonempty_pages / page_count) if page_count > 0 else 0.0
+
+    if extracted_word_count == 0:
+        failures.append(
+            "PDF-native extraction found no textual content. "
+            "The PDF is likely image-only/scanned or extraction failed."
+        )
+    elif page_count >= 3 and extracted_word_count < 150:
+        warnings.append(
+            f"Very low extracted text volume for {page_count} pages "
+            f"({extracted_word_count} words)."
+        )
+
+    if page_count > 0 and nonempty_ratio < 0.5:
+        warnings.append(
+            f"Only {nonempty_pages}/{page_count} pages yielded text "
+            f"({nonempty_ratio:.0%} non-empty pages)."
+        )
+
+    if failures:
+        status = "FAIL"
+    elif warnings:
+        status = "WARN"
+    else:
+        status = "PASS"
+
     return {
-        "status": "PASS",
+        "status": status,
         "mode": "pdf-native-only",
         "page_count": page_count,
-        "pdf_word_count": pdf_words,
-        "md_word_count": pdf_words,
-        "word_count_diff_pct": 0.0,
-        "warnings": [],
-        "failures": [],
+        "nonempty_pages": nonempty_pages,
+        "nonempty_page_ratio": round(nonempty_ratio, 3),
+        "pdf_word_count": extracted_word_count,
+        "md_word_count": None,
+        "word_count_diff_pct": None,
+        "spot_check_hit_ratio": None,
+        "warnings": warnings,
+        "failures": failures,
         "notes": [
             "Markdown conversion was skipped; workspace uses direct PDF text extraction.",
+            "Metrics are not directly comparable to markdown-conversion mode.",
         ],
         "source_pdf": str(pdf_path),
+        "native_markdown_word_count": count_words(extracted_text),
     }
 
 
@@ -623,7 +667,7 @@ def prepare_review(args: argparse.Namespace) -> int:
     if source_mode == "pdf-native-only":
         print(f"[1/5] Extracting PDF text natively: {original_pdf}")
         try:
-            native_md_text, page_count = extract_pdf_native_text(original_pdf)
+            native_md_text, page_count, extracted_words, nonempty_pages = extract_pdf_native_text(original_pdf)
         except Exception as exc:
             print(f"Error during PDF-native extraction: {exc}", file=sys.stderr)
             return EXIT_CONVERSION_ERROR
@@ -635,6 +679,8 @@ def prepare_review(args: argparse.Namespace) -> int:
             original_pdf,
             native_md_text,
             page_count,
+            extracted_words,
+            nonempty_pages,
         )
     else:
         print(f"[1/5] Converting PDF: {original_pdf}")
@@ -661,7 +707,7 @@ def prepare_review(args: argparse.Namespace) -> int:
         references = loaded_refs
 
     write_json(conversion_report_path, conversion_report)
-    if source_mode != "pdf-native-only" and conversion_report.get("status") == "FAIL":
+    if conversion_report.get("status") == "FAIL":
         print(
             f"Conversion verification failed. See: {conversion_report_path}",
             file=sys.stderr,

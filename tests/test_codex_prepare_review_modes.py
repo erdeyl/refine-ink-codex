@@ -33,13 +33,27 @@ class CodexPrepareReviewModeTests(unittest.TestCase):
     def test_pdf_native_verification_report_shape(self) -> None:
         report = prep.build_pdf_native_verification_report(
             pdf_path=Path("/tmp/a.pdf"),
-            extracted_text="abc def",
+            extracted_text="## Page 1\n\nabc def\n",
             page_count=3,
+            extracted_word_count=2,
+            nonempty_pages=1,
         )
-        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["status"], "WARN")
         self.assertEqual(report["mode"], "pdf-native-only")
         self.assertEqual(report["page_count"], 3)
         self.assertEqual(report["pdf_word_count"], 2)
+        self.assertGreaterEqual(len(report["warnings"]), 1)
+
+    def test_pdf_native_verification_report_fails_on_zero_words(self) -> None:
+        report = prep.build_pdf_native_verification_report(
+            pdf_path=Path("/tmp/a.pdf"),
+            extracted_text="## Page 1\n\n\n",
+            page_count=1,
+            extracted_word_count=0,
+            nonempty_pages=0,
+        )
+        self.assertEqual(report["status"], "FAIL")
+        self.assertGreaterEqual(len(report["failures"]), 1)
 
 
 if __name__ == "__main__":
