@@ -7,10 +7,16 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import bleach
 import markdown
 from jinja2 import Environment, select_autoescape
 from markupsafe import Markup
+
+try:
+    import nh3
+except ImportError:
+    nh3 = None
+
+import bleach
 
 
 def detect_language(md_text: str) -> str:
@@ -90,7 +96,6 @@ def sanitize_html(html: str) -> str:
         "h5",
         "h6",
         "hr",
-        "img",
         "li",
         "ol",
         "p",
@@ -110,12 +115,19 @@ def sanitize_html(html: str) -> str:
     allowed_attributes = {
         "*": ["id", "class"],
         "a": ["href", "title", "name"],
-        "img": ["src", "alt", "title"],
         "td": ["class"],
         "div": ["class"],
         "span": ["class"],
     }
     allowed_protocols = ["http", "https", "mailto"]
+    if nh3 is not None:
+        return nh3.clean(
+            html,
+            tags=set(allowed_tags),
+            attributes={tag: set(values) for tag, values in allowed_attributes.items()},
+            url_schemes=set(allowed_protocols),
+            strip_comments=True,
+        )
     return bleach.clean(
         html,
         tags=allowed_tags,

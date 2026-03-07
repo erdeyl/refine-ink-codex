@@ -37,6 +37,19 @@ Some explanatory text.
         self.assertIn("introduction", headings)
         self.assertIn("references", headings)
 
+    def test_pdf_references_ignores_inline_mentions(self) -> None:
+        text = "Introduction\nFor additional references, see Appendix A.\nNot a bibliography section."
+        self.assertEqual(verify.pdf_references(text), 0)
+
+    def test_fuzzy_match_uses_anchor_words_when_first_phrase_differs(self) -> None:
+        prefix = " ".join(f"w{i}" for i in range(5000))
+        needle = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron"
+        near_match = "alfa beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron"
+        haystack_words = prefix.split()
+        haystack_words[123:138] = near_match.split()
+        haystack = " ".join(haystack_words)
+        self.assertTrue(verify.fuzzy_match(needle, haystack, threshold=0.85))
+
 
 if __name__ == "__main__":
     unittest.main()

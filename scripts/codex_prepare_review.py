@@ -27,6 +27,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from pdf_to_markdown import EXIT_OK as CONVERT_OK
 from pdf_to_markdown import convert_pdf
 from pdf_to_markdown import extract_references_from_pdf
+from reference_headings import is_reference_heading_line
 from review_consistency_lint import lint_markdown
 from verify_conversion import verify as verify_conversion
 from verify_references import verify_all
@@ -67,6 +68,17 @@ def ensure_review_dirs(review_dir: Path) -> None:
         (review_dir / rel).mkdir(parents=True, exist_ok=True)
 
 
+def reset_review_dirs(review_dir: Path) -> None:
+    for rel in ["input", "verification", "chunks", "agent_outputs", "output"]:
+        target = review_dir / rel
+        if target.exists():
+            shutil.rmtree(target)
+    for rel in ["NEXT_STEPS.md"]:
+        target = review_dir / rel
+        if target.exists():
+            target.unlink()
+
+
 def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -75,11 +87,17 @@ def summarize_reference_results(results: list[dict[str, Any]]) -> dict[str, int]
     verified = sum(1 for r in results if r.get("status") == "verified")
     suspicious = sum(1 for r in results if r.get("status") == "suspicious")
     unverifiable = sum(1 for r in results if r.get("status") == "unverifiable")
+    verification_errors = sum(
+        1
+        for r in results
+        if isinstance(r.get("details"), str) and r["details"].startswith("Verification error:")
+    )
     return {
         "total": len(results),
         "verified": verified,
         "suspicious": suspicious,
         "unverifiable": unverifiable,
+        "verification_errors": verification_errors,
     }
 
 
@@ -244,7 +262,7 @@ def detect_section_tags(heading: str, text: str) -> dict[str, bool]:
         "has_equations": bool(re.search(r"\$|\\\(|\\\[", text)),
         "has_tables": bool(re.search(r"^\s*\|.+\|\s*$", text, flags=re.MULTILINE)),
         "has_figures": bool(re.search(r"!\[|^\s*figure\s+\d+", text, flags=re.IGNORECASE | re.MULTILINE)),
-        "is_references": any(token in heading_lower for token in ["references", "bibliography", "irodalom", "hivatkozas"]),
+        "is_references": is_reference_heading_line(heading),
         "is_abstract": "abstract" in heading_lower or "osszefoglalo" in heading_lower,
     }
 
@@ -469,7 +487,24 @@ def build_chunk_map(
             "dimension_assignments": _assign_dimensions(chunks),
         }
 
+    first_heading_line = heading_rows[0][0]
+    preamble_text = "\n".join(lines[: first_heading_line - 1]).strip()
+    if preamble_text:
+        tags = detect_section_tags("Preamble", preamble_text)
+        chunks.append(
+            {
+                "id": "c1",
+                "heading": "Preamble",
+                "level": 0,
+                "start_line": 1,
+                "end_line": first_heading_line - 1,
+                "words": count_words(preamble_text),
+                **tags,
+            }
+        )
+
     starts = heading_rows + [(len(lines) + 1, 0, "")]
+    chunk_index_offset = len(chunks)
     for idx, (start_line, level, heading) in enumerate(heading_rows, start=1):
         next_start = starts[idx][0]
         end_line = max(start_line, next_start - 1)
@@ -479,7 +514,7 @@ def build_chunk_map(
         tags = detect_section_tags(heading, section_text)
         chunks.append(
             {
-                "id": f"c{idx}",
+                "id": f"c{chunk_index_offset + idx}",
                 "heading": heading,
                 "level": level,
                 "start_line": start_line,
@@ -510,13 +545,18 @@ def write_agent_output_stubs(agent_output_dir: Path) -> None:
         )
 
 
-def review_template(paper_title: str, review_dir: Path, verification_status: str) -> str:
+def review_template(
+    paper_title: str,
+    review_dir: Path,
+    verification_status: str,
+    run_started: datetime,
+) -> str:
     return f"""# Referee Report
 
 **Manuscript:** {paper_title}
 **Review Workspace:** {review_dir}
 **Conversion Verification:** {verification_status}
-**Date:** {datetime.now(timezone.utc).strftime('%Y-%m-%d')}
+**Date:** {run_started.astimezone(timezone.utc).strftime('%Y-%m-%d')}
 
 ## Summary
 
@@ -582,7 +622,7 @@ Review workspace is ready at:
 - Chunking mode: `{chunking_mode}`
 - Consistency lint: {lint_summary['status']} ({lint_summary['finding_count']} findings)
 - Chunk map generated at `chunks/chunk_map.json` (`total_chunks`, `chunks`, `dimension_assignments`)
-- References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable
+- References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable, {ref_summary['verification_errors']} verification errors
 
 ## Run qualitative analysis passes
 
@@ -630,8 +670,14 @@ def prepare_review(args: argparse.Namespace) -> int:
     reviews_dir = Path(args.reviews_dir).expanduser().resolve()
     reviews_dir.mkdir(parents=True, exist_ok=True)
 
+    run_started = getattr(args, "run_started_at", None)
+    if isinstance(run_started, str) and run_started:
+        run_started_dt = datetime.fromisoformat(run_started).astimezone()
+    else:
+        run_started_dt = datetime.now().astimezone()
+
     paper_slug = slugify(args.name) if args.name else slugify(pdf_path.stem)
-    date_tag = datetime.now().strftime("%Y-%m-%d")
+    date_tag = run_started_dt.strftime("%Y-%m-%d")
     review_dir = reviews_dir / f"{paper_slug}_{date_tag}"
 
     if review_dir.exists() and not args.force:
@@ -641,6 +687,8 @@ def prepare_review(args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return EXIT_IO_ERROR
+    if review_dir.exists() and args.force:
+        reset_review_dirs(review_dir)
 
     ensure_review_dirs(review_dir)
 
@@ -718,7 +766,7 @@ def prepare_review(args: argparse.Namespace) -> int:
     reference_results: list[dict[str, Any]] = []
     if references and not args.skip_references:
         try:
-            s2_api_key = args.s2_api_key or os.environ.get("S2_API_KEY")
+            s2_api_key = os.environ.get("S2_API_KEY")
             mailto = args.email.strip() if args.email else None
             if not mailto:
                 print(
@@ -750,7 +798,12 @@ def prepare_review(args: argparse.Namespace) -> int:
     print("[5/5] Writing scaffold outputs")
     review_en_path = output_dir / "review_EN.md"
     review_en_path.write_text(
-        review_template(pdf_path.stem, review_dir, conversion_report.get("status", "UNKNOWN")),
+        review_template(
+            pdf_path.stem,
+            review_dir,
+            conversion_report.get("status", "UNKNOWN"),
+            run_started_dt,
+        ),
         encoding="utf-8",
     )
 
@@ -762,7 +815,7 @@ def prepare_review(args: argparse.Namespace) -> int:
 
     manifest = {
         "version": "codex-1.0",
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": run_started_dt.astimezone(timezone.utc).isoformat(),
         "paper": {
             "source_pdf": str(pdf_path),
             "workspace_pdf": str(original_pdf),
@@ -835,7 +888,6 @@ def parse_args() -> argparse.Namespace:
         default=os.environ.get("REFINE_INK_EMAIL", ""),
         help="Email for CrossRef/OpenAlex polite pool (or set REFINE_INK_EMAIL)",
     )
-    parser.add_argument("--s2-api-key", default=None, help="Semantic Scholar API key")
     parser.add_argument(
         "--skip-references",
         action="store_true",

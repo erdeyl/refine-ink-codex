@@ -52,14 +52,54 @@ def _has_any(text: str, patterns: list[str], flags: int = re.IGNORECASE | re.DOT
     return any(re.search(pattern, text, flags) for pattern in patterns)
 
 
+def _detect_profiles(flat: str) -> set[str]:
+    profiles: set[str] = set()
+
+    female_profile_markers = sum(
+        1
+        for pattern in [
+            r"female physicians",
+            r"gender ratio paradox",
+            r"gdp per capita",
+            r"physician",
+            r"cross-country comparisons",
+        ]
+        if re.search(pattern, flat, re.IGNORECASE)
+    )
+    if female_profile_markers >= 2:
+        profiles.add("female-physicians")
+
+    digital_trade_markers = sum(
+        1
+        for pattern in [
+            r"digital trade",
+            r"\bgvc\b",
+            r"\bprisma\b",
+            r"\bvosviewer\b",
+            r"title-abs-key",
+            r"google scholar",
+            r"data-free flow clauses",
+            r"digital partnership agreement",
+        ]
+        if re.search(pattern, flat, re.IGNORECASE)
+    )
+    if digital_trade_markers >= 2:
+        profiles.add("digital-trade")
+
+    return profiles
+
+
 def lint_markdown(md_text: str) -> dict[str, Any]:
     lines = md_text.splitlines()
     text = md_text
     flat = re.sub(r"\s+", " ", text)
     findings: list[dict[str, Any]] = []
+    profiles = _detect_profiles(flat)
+    female_physician_profile = "female-physicians" in profiles
+    digital_trade_profile = "digital-trade" in profiles
 
     # C01: scope contradiction: says no cross-country comparisons while using international framing.
-    if re.search(r"does not aim to provide cross-country comparisons", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"does not aim to provide cross-country comparisons", flat, re.IGNORECASE):
         if re.search(r"(international context|reference group|across[- ]country|cross[- ]country)", flat, re.IGNORECASE):
             _add(
                 findings,
@@ -73,7 +113,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
             )
 
     # C02: paradox wording ambiguity (levels vs dynamics).
-    if re.search(r"development.?gender ratio paradox", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"development.?gender ratio paradox", flat, re.IGNORECASE):
         if re.search(
             r"changes\s+in\s+gender\s+composition\s+do\s+not\s+simply\s+track\s+increases\s+in\s+gdp\s+per\s+capita",
             flat,
@@ -91,7 +131,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
             )
 
     # C03: H2 rejection wording mismatch.
-    if re.search(r"reject Hypothesis H\s*2", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"reject Hypothesis H\s*2", flat, re.IGNORECASE):
         if re.search(r"trends in the share of female physicians.*closely aligned", flat, re.IGNORECASE | re.DOTALL):
             _add(
                 findings,
@@ -105,7 +145,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
             )
 
     # C04: potentially inaccurate US parity statement.
-    if re.search(r"United States and the United Kingdom.*approaching parity by 2023", flat, re.IGNORECASE | re.DOTALL):
+    if female_physician_profile and re.search(r"United States and the United Kingdom.*approaching parity by 2023", flat, re.IGNORECASE | re.DOTALL):
         _add(
             findings,
             "C04",
@@ -118,7 +158,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C05: list/category phrasing ambiguity.
-    if re.search(r"public-sector professions,\s*predominantly publicly financed health systems", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"public-sector professions,\s*predominantly publicly financed health systems", flat, re.IGNORECASE):
         _add(
             findings,
             "C05",
@@ -131,7 +171,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C06: ambiguous parenthetical for lowest coefficients.
-    if re.search(
+    if female_physician_profile and re.search(
         r"\(Hungary\s+and\s+Poland\s+show\s+the\s+lowest,\s+but\s+still\s+strong\s+coefficients\)",
         flat,
         re.IGNORECASE,
@@ -148,7 +188,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C07: "uniformly negative" overclaim with sparse coverage.
-    if re.search(r"uniformly\s+negative", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"uniformly\s+negative", flat, re.IGNORECASE):
         if re.search(r"\bN/?A\b", flat, re.IGNORECASE):
             _add(
                 findings,
@@ -167,7 +207,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         for idx, line in enumerate(lines, start=1)
         if re.search(r"<br>\s*[0-2](?:\D|$)", line) and "|" in line
     ]
-    if sparse_n_lines:
+    if female_physician_profile and sparse_n_lines:
         sample = "; ".join(f"L{idx}" for idx, _ in sparse_n_lines[:4])
         _add(
             findings,
@@ -183,7 +223,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
     # C09: abrupt discourse transition marker.
     line_global = _line_number(lines, r"To interpret international differences")
     line_regional = _line_number(lines, r"Regional specificities also include")
-    if line_global and line_regional and 0 < (line_regional - line_global) <= 25:
+    if female_physician_profile and line_global and line_regional and 0 < (line_regional - line_global) <= 25:
         _add(
             findings,
             "C09",
@@ -196,7 +236,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C10: wording ambiguity if both terms appear.
-    if re.search(r"gender-balanced labour markets", flat, re.IGNORECASE) and re.search(
+    if female_physician_profile and re.search(r"gender-balanced labour markets", flat, re.IGNORECASE) and re.search(
         r"lower\s*[-–]\s*but\s+more\s+rapidly\s+increasing", flat, re.IGNORECASE
     ):
         _add(
@@ -211,7 +251,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C11: over-strong decline wording for Hungary male-physician density.
-    if re.search(r"only in isolated years", flat, re.IGNORECASE):
+    if female_physician_profile and re.search(r"only in isolated years", flat, re.IGNORECASE):
         _add(
             findings,
             "C11",
@@ -289,7 +329,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C16: likely terminology inversion for data-flow clauses.
-    if re.search(r"data-free flow clauses", flat, re.IGNORECASE):
+    if digital_trade_profile and re.search(r"data-free flow clauses", flat, re.IGNORECASE):
         _add(
             findings,
             "C16",
@@ -410,7 +450,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C25: redundant phrase in GVC mechanism sentence.
-    if re.search(r"division of the GVC division of labor", flat, re.IGNORECASE):
+    if digital_trade_profile and re.search(r"division of the GVC division of labor", flat, re.IGNORECASE):
         _add(
             findings,
             "C25",
@@ -423,7 +463,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C26: unclear contribution phrasing in comparative-study statement.
-    if re.search(r"provides a reference for the .*Digital Partnership Agreement", flat, re.IGNORECASE):
+    if digital_trade_profile and re.search(r"provides a reference for the .*Digital Partnership Agreement", flat, re.IGNORECASE):
         _add(
             findings,
             "C26",
@@ -511,7 +551,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C30: global inference likely overreaches a heavily single-source corpus.
-    if re.search(r"Google Scholar returned\s*48", flat, re.IGNORECASE) and _has_any(
+    if digital_trade_profile and re.search(r"Google Scholar returned\s*48", flat, re.IGNORECASE) and _has_any(
         flat,
         [
             r"global network",
@@ -533,6 +573,8 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
 
     # C31: operational definition gap for key construct in multi-RQ review.
     if (
+        digital_trade_profile
+        and
         re.search(r"digital trade rules", flat, re.IGNORECASE)
         and re.search(r"\bRQ1\b", flat, re.IGNORECASE)
         and re.search(r"\bRQ2\b", flat, re.IGNORECASE)
@@ -550,7 +592,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C32: keyword-network evidence may be conflated with geopolitical network claims.
-    if _has_any(flat, [r"VOSviewer", r"keyword co-occurrence"]) and _has_any(
+    if digital_trade_profile and _has_any(flat, [r"VOSviewer", r"keyword co-occurrence"]) and _has_any(
         flat,
         [r"U\.S\.-centered", r"multi-centered", r"network pattern"],
     ):
@@ -595,7 +637,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
         )
 
     # C35: ambiguous mechanism statement around ICT-gap narrowing.
-    if re.search(
+    if digital_trade_profile and re.search(
         r"constraints by narrowing the gap in information and communication technology",
         flat,
         re.IGNORECASE,
@@ -628,6 +670,7 @@ def lint_markdown(md_text: str) -> dict[str, Any]:
     return {
         "status": status,
         "finding_count": len(findings),
+        "detected_profiles": sorted(profiles),
         "findings": findings,
     }
 

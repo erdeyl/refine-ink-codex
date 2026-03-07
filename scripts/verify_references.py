@@ -57,6 +57,14 @@ def normalize(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
+def normalize_doi_value(doi: str) -> str:
+    """Normalize DOI values without destroying DOI-significant punctuation."""
+    normalized = doi.strip().lower()
+    normalized = re.sub(r"^https?://(?:dx\.)?doi\.org/", "", normalized)
+    normalized = re.sub(r"^doi:\s*", "", normalized)
+    return normalized
+
+
 def title_similarity(a: str, b: str) -> float:
     """Return 0-1 similarity between two titles using SequenceMatcher."""
     return SequenceMatcher(None, normalize(a), normalize(b)).ratio()
@@ -387,7 +395,7 @@ async def s2_lookup(
                 result.found = True
                 result.source = "semantic_scholar"
                 result.title = matched_title
-                ext_ids = data.get("externalIds", {})
+                ext_ids = data.get("externalIds") or {}
                 result.doi = ext_ids.get("DOI", doi)
                 year = extract_year(data.get("year"))
                 if year:
@@ -436,7 +444,7 @@ async def s2_lookup(
         result.found = True
         result.source = "semantic_scholar"
         result.title = best_item.get("title", "")
-        ext_ids = best_item.get("externalIds", {})
+        ext_ids = best_item.get("externalIds") or {}
         result.doi = ext_ids.get("DOI")
         result.similarity = best_sim
         year = extract_year(best_item.get("year"))
@@ -537,7 +545,9 @@ def _build_output(idx: int, ref: dict, match: MatchResult, raw_text: str) -> dic
     """Construct the output dict from a MatchResult."""
     doi = (ref.get("doi") or "").strip()
     ref_title = ref.get("title", "")
-    exact_doi_match = bool(doi and match.doi and normalize(doi) == normalize(match.doi))
+    exact_doi_match = bool(
+        doi and match.doi and normalize_doi_value(doi) == normalize_doi_value(match.doi)
+    )
 
     # Determine confidence and status
     if match.found:
@@ -631,6 +641,19 @@ def _reconstruct_raw(ref: dict) -> str:
 MAX_CONCURRENT = 5
 
 
+def _error_output(idx: int, ref: dict, error: str) -> dict:
+    return {
+        "ref_index": idx,
+        "raw_text": ref.get("raw_text", "") or _reconstruct_raw(ref),
+        "status": "unverifiable",
+        "verified_by": None,
+        "confidence": 0,
+        "matched_title": "",
+        "matched_doi": "",
+        "details": f"Verification error: {error}",
+    }
+
+
 async def verify_all(
     references: list[dict],
     mailto: Optional[str],
@@ -654,9 +677,12 @@ async def verify_all(
         async def _worker(idx: int, ref: dict):
             async with sem:
                 print(f"Verifying reference {idx + 1}/{total}...", flush=True)
-                results[idx] = await verify_one(
-                    idx, ref, client, cr_limiter, oa_limiter, s2_limiter, mailto, s2_api_key
-                )
+                try:
+                    results[idx] = await verify_one(
+                        idx, ref, client, cr_limiter, oa_limiter, s2_limiter, mailto, s2_api_key
+                    )
+                except Exception as exc:
+                    results[idx] = _error_output(idx, ref, str(exc))
 
         tasks = [asyncio.create_task(_worker(i, ref)) for i, ref in enumerate(references)]
         await asyncio.gather(*tasks)
@@ -728,12 +754,6 @@ def parse_args() -> argparse.Namespace:
         help="Email for CrossRef/OpenAlex polite pool (strongly recommended).",
     )
     parser.add_argument(
-        "--s2-api-key",
-        type=str,
-        default=None,
-        help="Semantic Scholar API key (or set S2_API_KEY env var).",
-    )
-    parser.add_argument(
         "--output",
         type=str,
         default=None,
@@ -763,7 +783,7 @@ def main():
         sys.exit(0)
 
     # Resolve API key
-    s2_api_key = args.s2_api_key or os.environ.get("S2_API_KEY")
+    s2_api_key = os.environ.get("S2_API_KEY")
 
     mailto = args.email
     if not mailto:

@@ -32,6 +32,7 @@ class TestReviewConsistencyLint(unittest.TestCase):
 
     def test_detects_article_only_mismatch_and_definition_gap(self):
         text = """
+        This PRISMA review examines digital trade rules.
         RQ1 asks how digital trade rules originated.
         RQ2 asks how digital trade rules shaped networks.
         Exclusion criteria: Research other than articles.
@@ -41,6 +42,7 @@ class TestReviewConsistencyLint(unittest.TestCase):
         ids = _ids(report)
         self.assertIn("C29", ids)
         self.assertIn("C31", ids)
+        self.assertIn("digital-trade", report["detected_profiles"])
 
     def test_effect_overclaim_requires_explicit_appraisal(self):
         without_appraisal = """
@@ -88,6 +90,15 @@ class TestReviewConsistencyLint(unittest.TestCase):
         ids = _ids(report)
         self.assertIn("C30", ids)
         self.assertIn("C32", ids)
+
+    def test_profile_specific_rule_is_quiet_without_profile_match(self):
+        text = """
+        The United States and the United Kingdom are approaching parity by 2023.
+        This sentence alone should not trigger a manuscript-specific profile.
+        """
+        report = lint.lint_markdown(text)
+        self.assertNotIn("C04", _ids(report))
+        self.assertEqual(report["detected_profiles"], [])
 
 
 if __name__ == "__main__":

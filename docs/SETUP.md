@@ -37,7 +37,7 @@ Installed packages:
 - `pymupdf` for direct PDF text/table extraction in verification
 - `httpx` for async API requests
 - `markdown` and `jinja2` for HTML rendering
-- `bleach` for report HTML sanitization
+- `nh3` (preferred) and `bleach` (fallback) for report HTML sanitization
 
 ## 3. (Optional) Set Semantic Scholar API Key
 
@@ -45,11 +45,7 @@ Installed packages:
 export S2_API_KEY="your_api_key_here"
 ```
 
-You can also pass it per run:
-
-```bash
-python scripts/codex_prepare_review.py path/to/paper.pdf --s2-api-key your_api_key_here
-```
+The workflow reads this from the environment only to avoid leaking secrets via shell history or process lists.
 
 ## 4. Verify Installation
 

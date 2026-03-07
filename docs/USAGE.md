@@ -24,10 +24,11 @@ Optional flags:
 - `--reviews-dir reviews_alt`
 - `--name custom-paper-slug`
 - `--skip-references`
-- `--s2-api-key ...`
 - `--force`
 - `--chunking chunked|no-chunk|pdf`
 - `--pdf-native-only`
+
+Set `S2_API_KEY` in the environment for Semantic Scholar authenticated access.
 
 Three-mode orchestration (chunked + no-chunk + pdf-native/pdf-chunking):
 
@@ -103,6 +104,8 @@ python scripts/md_to_html.py reviews/<paper>_<YYYY-MM-DD>/output/review_EN.md
 - `PASS`: safe to continue
 - `WARN`: continue with caution
 - `FAIL`: conversion quality is too low; use a better PDF or manual correction
+
+`--force` reuses the target review directory name and refreshes the generated scaffold so stale deterministic artifacts are not mixed into the new run.
 
 Reference statuses in `verification/reference_report.json`:
 

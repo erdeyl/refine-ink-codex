@@ -30,6 +30,18 @@ class CodexPrepareReviewModeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 prep.build_chunk_map(md_path, chunking_mode="pdf", pdf_path=None)
 
+    def test_chunked_mode_preserves_preamble_as_first_chunk(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            md_path = Path(td) / "doc.md"
+            md_path.write_text(
+                "Title line\n\nAbstract text before heading.\n\n## Intro\nBody text.\n",
+                encoding="utf-8",
+            )
+            chunk_map = prep.build_chunk_map(md_path, chunking_mode="chunked")
+
+        self.assertEqual(chunk_map["chunks"][0]["heading"], "Preamble")
+        self.assertEqual(chunk_map["chunks"][1]["heading"], "Intro")
+
     def test_pdf_native_verification_report_shape(self) -> None:
         report = prep.build_pdf_native_verification_report(
             pdf_path=Path("/tmp/a.pdf"),

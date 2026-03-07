@@ -9,7 +9,7 @@
 ## What This Repo Provides
 
 - Deterministic preprocessing of academic PDFs (PDF -> Markdown + conversion checks)
-- Rule-based manuscript consistency lint to flag common internal-logic issues early
+- Rule-based manuscript consistency lint with generic and profile-aware checks
 - Reference verification against CrossRef, OpenAlex, and Semantic Scholar
 - Codex-ready review workspace scaffolding (`chunks`, `agent_outputs`, `output`)
 - Structured report and manifest templates for reproducible audits
@@ -76,6 +76,8 @@ Each prepared review contains:
 - `output/review_EN.md`
 - `output/manifest.json`
 - `NEXT_STEPS.md`
+
+Set `S2_API_KEY` in the environment if you want Semantic Scholar authenticated lookups; the workflow no longer accepts API keys on the command line.
 
 ## Repository Layout
 

@@ -31,15 +31,21 @@ def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def load_json_or_default(path: Path, default: Any) -> Any:
+    if not path.exists():
+        return default
+    return load_json(path)
+
+
 def _run_single_mode(
     pdf_path: Path,
     reviews_dir: Path,
     base_slug: str,
     mode: dict[str, Any],
     email: str,
-    s2_api_key: str | None,
     skip_references: bool,
     force: bool,
+    run_started_at: str,
 ) -> Path:
     run_name = f"{base_slug}-{mode['name_suffix']}"
     args = argparse.Namespace(
@@ -47,26 +53,38 @@ def _run_single_mode(
         reviews_dir=str(reviews_dir),
         name=run_name,
         email=email,
-        s2_api_key=s2_api_key,
         skip_references=skip_references,
         force=force,
         chunking=mode["chunking"],
         pdf_native_only=mode["pdf_native_only"],
+        run_started_at=run_started_at,
     )
 
     code = prepare_review(args)
     if code != EXIT_OK:
         raise RuntimeError(f"workflow mode '{mode['label']}' failed with exit code {code}")
 
-    date_tag = datetime.now().strftime("%Y-%m-%d")
+    date_tag = datetime.fromisoformat(run_started_at).astimezone().strftime("%Y-%m-%d")
     return reviews_dir / f"{slugify(run_name)}_{date_tag}"
 
 
 def _extract_mode_summary(mode: dict[str, Any], review_dir: Path) -> dict[str, Any]:
-    verification = load_json(review_dir / "verification" / "original_verification.json")
-    lint_report = load_json(review_dir / "verification" / "consistency_lint_report.json")
-    reference_report = load_json(review_dir / "verification" / "reference_report.json")
-    extracted_refs = load_json(review_dir / "input" / "original_references.json")
+    verification = load_json_or_default(
+        review_dir / "verification" / "original_verification.json",
+        {"status": "FAIL", "warnings": ["missing conversion report"], "failures": ["missing conversion report"]},
+    )
+    lint_report = load_json_or_default(
+        review_dir / "verification" / "consistency_lint_report.json",
+        {"status": "UNKNOWN", "finding_count": 0, "findings": []},
+    )
+    reference_report = load_json_or_default(
+        review_dir / "verification" / "reference_report.json",
+        [],
+    )
+    extracted_refs = load_json_or_default(
+        review_dir / "input" / "original_references.json",
+        [],
+    )
 
     warnings = verification.get("warnings", [])
     failures = verification.get("failures", [])
@@ -289,7 +307,9 @@ def run_all(args: argparse.Namespace) -> Path:
     reviews_dir.mkdir(parents=True, exist_ok=True)
 
     base_slug = slugify(args.name) if args.name else slugify(pdf_path.stem)
-    date_tag = datetime.now().strftime("%Y-%m-%d")
+    run_started = datetime.now().astimezone()
+    run_started_at = run_started.isoformat()
+    date_tag = run_started.strftime("%Y-%m-%d")
 
     mode_specs = [
         {
@@ -321,9 +341,9 @@ def run_all(args: argparse.Namespace) -> Path:
                 base_slug=base_slug,
                 mode=mode,
                 email=args.email,
-                s2_api_key=args.s2_api_key,
                 skip_references=args.skip_references,
                 force=args.force,
+                run_started_at=run_started_at,
             )
             summaries.append(_extract_mode_summary(mode, review_dir))
         except Exception as exc:
@@ -368,7 +388,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--reviews-dir", default="reviews", help="Root review directory")
     parser.add_argument("--name", default=None, help="Base slug override")
     parser.add_argument("--email", default="", help="Email for reference verification polite pools")
-    parser.add_argument("--s2-api-key", default=None, help="Semantic Scholar API key")
     parser.add_argument("--skip-references", action="store_true", help="Skip API reference checks")
     parser.add_argument("--force", action="store_true", help="Allow reusing existing run dirs")
     return parser.parse_args()
