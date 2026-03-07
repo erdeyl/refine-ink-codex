@@ -14,6 +14,7 @@ PDF input
 [Phase 1] pdf_to_markdown.py
   -> original_converted.md
   -> original_references.json
+  (or PDF-native extraction when `--pdf-native-only`)
   |
   v
 [Phase 2] verify_conversion.py
@@ -43,6 +44,17 @@ PDF input
   -> output/review_EN.md(.html)
   -> optional review_HU.md(.html)
 ```
+
+`codex_prepare_review.py` supports chunking strategies:
+
+- `chunked`: heading-based markdown chunking
+- `no-chunk`: single document chunk
+- `pdf`: PDF-native page chunking
+
+`run_joint_workflow_review.py` runs three process variants and generates:
+
+- `workflow_comparison.json/.md`
+- `joint_review.md`
 
 ## Deterministic Components
 

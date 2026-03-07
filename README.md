@@ -50,6 +50,17 @@ If no path is provided, the script auto-detects a single `.pdf` in the current d
 5. Render HTML:
    - `python scripts/md_to_html.py reviews/<paper>_<date>/output/review_EN.md`
 
+## Workflow Variants
+
+- Default (Markdown conversion + heading chunking):
+  - `python scripts/codex_prepare_review.py paper.pdf`
+- No-chunk scaffold:
+  - `python scripts/codex_prepare_review.py paper.pdf --chunking no-chunk`
+- PDF-native source mode (no PDF->MD conversion engine):
+  - `python scripts/codex_prepare_review.py paper.pdf --pdf-native-only --chunking pdf`
+- Run 3-mode comparison + joint review:
+  - `python scripts/run_joint_workflow_review.py paper.pdf --force`
+
 ## Deterministic Outputs
 
 Each prepared review contains:
@@ -73,6 +84,7 @@ refine-ink-codex/
   AGENTS.md
   scripts/
     codex_prepare_review.py
+    run_joint_workflow_review.py
     pdf_to_markdown.py
     verify_conversion.py
     verify_references.py
