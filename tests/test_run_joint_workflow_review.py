@@ -80,6 +80,23 @@ class RunJointWorkflowReviewTests(unittest.TestCase):
         self.assertEqual(summary["lint_status"], "UNKNOWN")
         self.assertEqual(summary["references_extracted"], 0)
 
+    def test_comparison_notebooklm_template_includes_successful_mode_artifacts(self) -> None:
+        summaries = [
+            {"label": "chunked-md", "review_dir": "/tmp/review-a"},
+            {"label": "pdf-native-only", "review_dir": None},
+        ]
+
+        workflow = joint._comparison_notebooklm_workflow_template(
+            Path("/tmp/comparison"),
+            Path("/tmp/paper.pdf"),
+            summaries,
+        )
+
+        self.assertIn("/tmp/paper.pdf", workflow)
+        self.assertIn("workflow_comparison.md", workflow)
+        self.assertIn("/tmp/review-a/input/original_converted.md", workflow)
+        self.assertNotIn("None", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

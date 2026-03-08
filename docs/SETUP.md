@@ -15,6 +15,7 @@ Optional:
 | Requirement | Purpose |
 |---|---|
 | Semantic Scholar API key | Higher throughput for reference verification |
+| NotebookLM MCP in Codex | Grounded text-analysis sidecar during review and synthesis |
 
 ## 1. Clone
 
@@ -47,7 +48,18 @@ export S2_API_KEY="your_api_key_here"
 
 The workflow reads this from the environment only to avoid leaking secrets via shell history or process lists.
 
-## 4. Verify Installation
+## 4. (Optional) Configure NotebookLM MCP In Codex
+
+This repository does not vendor a NotebookLM client. Configure NotebookLM in your Codex environment separately if it is available there.
+
+Once configured, each prepared review workspace includes:
+
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
+
+Use NotebookLM after deterministic preparation, during each analysis pass, and again before final synthesis or joint workflow comparison.
+
+## 5. Verify Installation
 
 ```bash
 python scripts/codex_prepare_review.py --help
@@ -57,7 +69,7 @@ python scripts/verify_references.py --help
 python scripts/md_to_html.py --help
 ```
 
-## 5. First Run
+## 6. First Run
 
 ```bash
 python scripts/codex_prepare_review.py [path/to/paper.pdf] --email you@example.com

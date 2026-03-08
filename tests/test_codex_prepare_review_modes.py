@@ -12,6 +12,13 @@ import codex_prepare_review as prep  # noqa: E402
 
 
 class CodexPrepareReviewModeTests(unittest.TestCase):
+    def test_ensure_review_dirs_creates_notebooklm_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            review_dir = Path(td) / "review"
+            prep.ensure_review_dirs(review_dir)
+
+            self.assertTrue((review_dir / "notebooklm").is_dir())
+
     def test_no_chunk_mode_forces_single_chunk(self) -> None:
         with tempfile.TemporaryDirectory() as td:
             md_path = Path(td) / "doc.md"
@@ -66,6 +73,14 @@ class CodexPrepareReviewModeTests(unittest.TestCase):
         )
         self.assertEqual(report["status"], "FAIL")
         self.assertGreaterEqual(len(report["failures"]), 1)
+
+    def test_notebooklm_workflow_template_covers_joint_review_phase(self) -> None:
+        workflow = prep.notebooklm_workflow_template(Path("/tmp/review"))
+
+        self.assertIn("NotebookLM", workflow)
+        self.assertIn("input/original.pdf", workflow)
+        self.assertIn("Phase 4: Workflow Comparison and Final Audit", workflow)
+        self.assertIn("scripts/run_joint_workflow_review.py", workflow)
 
 
 if __name__ == "__main__":

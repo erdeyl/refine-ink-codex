@@ -64,12 +64,12 @@ def slugify(text: str) -> str:
 
 
 def ensure_review_dirs(review_dir: Path) -> None:
-    for rel in ["input", "verification", "chunks", "agent_outputs", "output"]:
+    for rel in ["input", "verification", "chunks", "agent_outputs", "notebooklm", "output"]:
         (review_dir / rel).mkdir(parents=True, exist_ok=True)
 
 
 def reset_review_dirs(review_dir: Path) -> None:
-    for rel in ["input", "verification", "chunks", "agent_outputs", "output"]:
+    for rel in ["input", "verification", "chunks", "agent_outputs", "notebooklm", "output"]:
         target = review_dir / rel
         if target.exists():
             shutil.rmtree(target)
@@ -654,9 +654,86 @@ python scripts/md_to_html.py {review_dir}/output/review_EN.md
 ## Evidence discipline
 
 - Quote exact source text from `input/original_converted.md`
+- Use `notebooklm/WORKFLOW.md` after preparation, before closing each analysis pass, and again before final synthesis
+- Record material NotebookLM MCP interactions in `notebooklm/QUESTION_LOG.md`
 - Review `verification/consistency_lint_report.json` and resolve/confirm each flagged issue
 - Assign severity and confidence per finding
 - Keep unverifiable claims in low-confidence appendix
+"""
+
+
+def notebooklm_workflow_template(review_dir: Path) -> str:
+    return f"""# NotebookLM Workflow
+
+Use NotebookLM as a grounded text-analysis sidecar. Treat it as a question-answering and contradiction-detection tool, not as a substitute for quoting the underlying source files.
+
+## Source Pack
+
+Create/update a notebook containing:
+
+1. `{review_dir}/input/original.pdf`
+2. `{review_dir}/input/original_converted.md`
+3. `{review_dir}/verification/original_verification.json`
+4. `{review_dir}/verification/consistency_lint_report.json`
+5. `{review_dir}/verification/reference_report.json`
+6. `{review_dir}/chunks/chunk_map.json`
+7. `agent_outputs/*.md` as soon as you start writing pass outputs
+
+## Phase 1: Grounding After Preparation
+
+Ask NotebookLM MCP:
+
+- "Summarize the paper's research question, identification/design, and main conclusion in five bullets with citations."
+- "List any places where the PDF text and converted markdown appear inconsistent or incomplete."
+- "Which sections, tables, and figures are central to the paper's main claim?"
+
+## Phase 2: Analysis Pass Support
+
+Use NotebookLM before finalizing each pass:
+
+- `math-logic`: ask for equations, assumptions, and claimed derivation steps that are unsupported or inconsistent.
+- `notation`: ask where symbols, abbreviations, or variable names change meaning across sections.
+- `exposition`: ask for abstract/introduction/results/conclusion contradictions.
+- `empirical`: ask whether textual claims match table and figure evidence.
+- `cross-section`: ask for statements in one section that are contradicted or weakened elsewhere.
+- `econometrics`: ask for identification threats, missing robustness checks, and interpretation overreach.
+- `literature`: ask which cited works are used for framing, method, and evidence, and which obvious comparison points are missing.
+- `references`: ask which suspicious or unverifiable references matter materially for the paper's claims.
+- `language`: ask for ambiguous, over-strong, or internally inconsistent phrasing with source citations.
+
+## Phase 3: Synthesis QA
+
+Before finalizing `output/review_EN.md`, ask:
+
+- "Which proposed reviewer criticisms are best supported by the source text?"
+- "Which of my draft claims are not fully supported by the notebook sources?"
+- "What contradictions or overstatements remain unresolved?"
+
+## Phase 4: Workflow Comparison and Final Audit
+
+If you later run `scripts/run_joint_workflow_review.py`, add the comparison workspace outputs to the notebook and ask:
+
+- "Which workflow mode preserved the paper's structure, tables, and references best?"
+- "Which claims appear in one workflow's review artifacts but are not supported by the original PDF?"
+- "Which unresolved contradictions remain after combining chunked, no-chunk, and PDF-native evidence?"
+
+## Logging Discipline
+
+Record every material NotebookLM exchange in `QUESTION_LOG.md`:
+
+- phase
+- question asked
+- concise answer summary
+- cited source passages/files
+- follow-up action in the review
+"""
+
+
+def notebooklm_question_log_template() -> str:
+    return """# NotebookLM Question Log
+
+| Phase | Question | Answer Summary | Cited Sources | Follow-up Action |
+|---|---|---|---|---|
 """
 
 
@@ -696,6 +773,7 @@ def prepare_review(args: argparse.Namespace) -> int:
     verification_dir = review_dir / "verification"
     chunks_dir = review_dir / "chunks"
     agent_outputs_dir = review_dir / "agent_outputs"
+    notebooklm_dir = review_dir / "notebooklm"
     output_dir = review_dir / "output"
 
     original_pdf = input_dir / "original.pdf"
@@ -783,7 +861,7 @@ def prepare_review(args: argparse.Namespace) -> int:
     write_json(reference_report_path, reference_results)
     ref_summary = summarize_reference_results(reference_results)
 
-    print("[4/5] Building chunk map, consistency lint, and agent stubs")
+    print("[4/5] Building chunk map, consistency lint, and analysis scaffolds")
     chunk_map = build_chunk_map(converted_md, chunking_mode=chunking_mode, pdf_path=original_pdf)
     chunk_map_path = chunks_dir / "chunk_map.json"
     write_json(chunk_map_path, chunk_map)
@@ -794,8 +872,16 @@ def prepare_review(args: argparse.Namespace) -> int:
     lint_summary = summarize_lint_report(lint_report)
 
     write_agent_output_stubs(agent_outputs_dir)
+    (notebooklm_dir / "WORKFLOW.md").write_text(
+        notebooklm_workflow_template(review_dir),
+        encoding="utf-8",
+    )
+    (notebooklm_dir / "QUESTION_LOG.md").write_text(
+        notebooklm_question_log_template(),
+        encoding="utf-8",
+    )
 
-    print("[5/5] Writing scaffold outputs")
+    print("[5/5] Writing output, manifest, and NotebookLM guidance")
     review_en_path = output_dir / "review_EN.md"
     review_en_path.write_text(
         review_template(
@@ -843,6 +929,10 @@ def prepare_review(args: argparse.Namespace) -> int:
             "review_markdown": str(review_en_path),
             "next_steps": str(next_steps_path),
             "agent_outputs": [str(agent_outputs_dir / f"{name}.md") for name in AGENT_PASSES],
+            "notebooklm": {
+                "workflow": str(notebooklm_dir / "WORKFLOW.md"),
+                "question_log": str(notebooklm_dir / "QUESTION_LOG.md"),
+            },
         },
     }
 

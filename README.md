@@ -12,6 +12,7 @@
 - Rule-based manuscript consistency lint with generic and profile-aware checks
 - Reference verification against CrossRef, OpenAlex, and Semantic Scholar
 - Codex-ready review workspace scaffolding (`chunks`, `agent_outputs`, `output`)
+- NotebookLM sidecar scaffolding for grounded contradiction checks and synthesis QA
 - Structured report and manifest templates for reproducible audits
 - Styled HTML rendering of final Markdown reports
 
@@ -27,7 +28,7 @@ pip install -r scripts/requirements.txt
 python scripts/codex_prepare_review.py path/to/paper.pdf --email you@example.com
 ```
 
-After preparation completes, continue review passes in the generated workspace and finalize `output/review_EN.md`.
+After preparation completes, use `notebooklm/WORKFLOW.md` during grounding, pass drafting, and synthesis, then finalize `output/review_EN.md`.
 
 If no path is provided, the script auto-detects a single `.pdf` in the current directory.
 
@@ -44,10 +45,11 @@ If no path is provided, the script auto-detects a single `.pdf` in the current d
 1. Run deterministic preparation:
    - `python scripts/codex_prepare_review.py [path/to/paper.pdf]`
 2. Open `reviews/<paper>_<date>/NEXT_STEPS.md`
-3. Fill analysis outputs under `agent_outputs/`:
+3. Use NotebookLM MCP with the generated source pack guidance in `notebooklm/WORKFLOW.md`
+4. Fill analysis outputs under `agent_outputs/`:
    - `math-logic.md`, `notation.md`, `exposition.md`, `empirical.md`, `cross-section.md`, `econometrics.md`, `literature.md`, `references.md`, `language.md`
-4. Synthesize the final report in `output/review_EN.md` (and `review_HU.md` when needed)
-5. Render HTML:
+5. Synthesize the final report in `output/review_EN.md` (and `review_HU.md` when needed)
+6. Render HTML:
    - `python scripts/md_to_html.py reviews/<paper>_<date>/output/review_EN.md`
 
 ## Workflow Variants
@@ -60,6 +62,7 @@ If no path is provided, the script auto-detects a single `.pdf` in the current d
   - `python scripts/codex_prepare_review.py paper.pdf --pdf-native-only --chunking pdf`
 - Run 3-mode comparison + joint review:
   - `python scripts/run_joint_workflow_review.py paper.pdf --force`
+  - Comparison workspace also includes `notebooklm/WORKFLOW.md` for cross-mode QA
 
 ## Deterministic Outputs
 
@@ -73,6 +76,8 @@ Each prepared review contains:
 - `verification/reference_report.json`
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
 - `agent_outputs/*.md` (scaffolded)
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
 - `output/review_EN.md`
 - `output/manifest.json`
 - `NEXT_STEPS.md`
@@ -99,6 +104,7 @@ refine-ink-codex/
     AUDIT.md
     CHUNKING.md
     AGENTS.md
+    NOTEBOOKLM.md
   legacy/
     claude/                 # Original Claude-specific assets retained for reference
 ```
@@ -111,6 +117,7 @@ refine-ink-codex/
 - [docs/AUDIT.md](docs/AUDIT.md)
 - [docs/CHUNKING.md](docs/CHUNKING.md)
 - [docs/AGENTS.md](docs/AGENTS.md)
+- [docs/NOTEBOOKLM.md](docs/NOTEBOOKLM.md)
 
 ## Legacy Claude Assets
 

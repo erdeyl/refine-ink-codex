@@ -11,6 +11,7 @@ from typing import Any
 
 from codex_prepare_review import (
     EXIT_OK,
+    notebooklm_question_log_template,
     prepare_review,
     slugify,
 )
@@ -203,11 +204,78 @@ def _build_consensus(summaries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return consensus
 
 
+def _comparison_notebooklm_workflow_template(
+    comparison_dir: Path,
+    pdf_path: Path,
+    summaries: list[dict[str, Any]],
+) -> str:
+    source_lines = [
+        f"1. `{pdf_path}`",
+        f"2. `{comparison_dir / 'workflow_comparison.md'}`",
+        f"3. `{comparison_dir / 'workflow_comparison.json'}`",
+        f"4. `{comparison_dir / 'joint_review.md'}`",
+    ]
+
+    next_index = len(source_lines) + 1
+    for summary in summaries:
+        review_dir = summary.get("review_dir")
+        if not review_dir:
+            continue
+        review_path = Path(review_dir)
+        source_lines.extend(
+            [
+                f"{next_index}. `{review_path / 'input' / 'original_converted.md'}` ({summary['label']})",
+                f"{next_index + 1}. `{review_path / 'verification' / 'original_verification.json'}` ({summary['label']})",
+                f"{next_index + 2}. `{review_path / 'verification' / 'reference_report.json'}` ({summary['label']})",
+                f"{next_index + 3}. `{review_path / 'output' / 'manifest.json'}` ({summary['label']})",
+            ]
+        )
+        next_index += 4
+
+    return f"""# NotebookLM Workflow For Joint Review
+
+Use NotebookLM as a grounded comparison layer across workflow modes. Keep the original PDF in the notebook and treat all other workflow artifacts as derivative evidence to challenge, not to trust blindly.
+
+## Source Pack
+
+{chr(10).join(source_lines)}
+
+## Phase 1: Mode Selection
+
+Ask NotebookLM MCP:
+
+- "Which workflow preserved the paper's title, abstract, section boundaries, tables, and references best?"
+- "Where do the workflow outputs disagree about what the paper actually says?"
+- "Which verification warnings matter most for selecting the primary workflow?"
+
+## Phase 2: Contradiction Detection
+
+Ask:
+
+- "Which findings or summaries in the comparison artifacts are contradicted by the original PDF?"
+- "Which claims appear in one mode only and lack direct support from the PDF?"
+- "Which sections are consistently represented across all workflow modes?"
+
+## Phase 3: Final Joint Synthesis QA
+
+Before accepting `joint_review.md`, ask:
+
+- "Which criticisms are strongest across multiple workflow modes and best supported by citations?"
+- "Which final recommendations overreach beyond the notebook sources?"
+- "What unresolved conversion uncertainties should remain explicit in the final review?"
+
+## Logging Discipline
+
+Record material comparison-stage NotebookLM exchanges in `notebooklm/QUESTION_LOG.md`.
+"""
+
+
 def _render_comparison_md(summaries: list[dict[str, Any]], best: dict[str, Any], consensus: list[dict[str, Any]]) -> str:
     lines = [
         "# Workflow Comparison",
         "",
         f"Best mode by objective score: **{best['label']}** (score {best['score']})",
+        "NotebookLM comparison prompts: `notebooklm/WORKFLOW.md`",
         "",
         "| Mode | Source | Chunking | Conversion | Word Diff % | Spot Hit | Refs Extracted | Ref Verify (V/S/U) | Lint Findings | Warnings |",
         "|---|---|---|---|---:|---:|---:|---|---:|---:|",
@@ -248,6 +316,7 @@ def _render_joint_review_md(
         "# Joint Review (3-Mode Synthesis)",
         "",
         f"Source document: `{pdf_path}`",
+        "NotebookLM joint-review guide: `notebooklm/WORKFLOW.md`",
         "",
         "## Recommended Primary Workflow",
         "",
@@ -354,6 +423,8 @@ def run_all(args: argparse.Namespace) -> Path:
 
     comparison_dir = reviews_dir / f"{base_slug}-workflow-comparison_{date_tag}"
     comparison_dir.mkdir(parents=True, exist_ok=True)
+    notebooklm_dir = comparison_dir / "notebooklm"
+    notebooklm_dir.mkdir(parents=True, exist_ok=True)
 
     comparison_json = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -374,6 +445,14 @@ def run_all(args: argparse.Namespace) -> Path:
 
     (comparison_dir / "joint_review.md").write_text(
         _render_joint_review_md(pdf_path, summaries, best, consensus),
+        encoding="utf-8",
+    )
+    (notebooklm_dir / "WORKFLOW.md").write_text(
+        _comparison_notebooklm_workflow_template(comparison_dir, pdf_path, summaries),
+        encoding="utf-8",
+    )
+    (notebooklm_dir / "QUESTION_LOG.md").write_text(
+        notebooklm_question_log_template(),
         encoding="utf-8",
     )
 
