@@ -34,7 +34,18 @@ The standard review workspace NotebookLM source pack should include:
 4. `verification/consistency_lint_report.json`
 5. `verification/reference_report.json`
 6. `chunks/chunk_map.json`
-7. `agent_outputs/*.md` once pass drafts exist
+7. `chunks/convolution_plan.md`
+8. `agent_outputs/*.md` once pass drafts exist
+
+## Workflow-Specific Convolution Strategies
+
+NotebookLM should use the overlap strategy generated for the active workflow:
+
+- `chunked`: section/chunk overlap to catch local argument drift and section-to-section contradictions
+- `no-chunk`: paragraph/span overlap to retain coverage even when the main analysis works on the full document
+- `pdf`: page overlap to compare claims against the PDF-native extraction path
+
+The current strategy is declared in `chunk_map.json` under `convolution_assignments.strategy` and summarized in `chunks/convolution_plan.md`.
 
 ## Three-Mode Comparison Phase
 

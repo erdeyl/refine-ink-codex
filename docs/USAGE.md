@@ -58,6 +58,7 @@ Key files:
 - `verification/original_verification.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
+- `chunks/convolution_plan.md`
 - `notebooklm/WORKFLOW.md`
 - `notebooklm/QUESTION_LOG.md`
 - `output/review_EN.md`
@@ -74,6 +75,10 @@ If your Codex environment has NotebookLM MCP configured, use the generated guida
 
 - upload the workspace source pack listed in `notebooklm/WORKFLOW.md`
 - ask NotebookLM for contradictions, unsupported claims, and section-to-section inconsistencies
+- follow `chunks/convolution_plan.md` for workflow-specific overlap sweeps:
+  - `chunked`: heading-chunk overlap
+  - `no-chunk`: paragraph/span overlap
+  - `pdf`: page overlap
 - log material exchanges in `notebooklm/QUESTION_LOG.md`
 
 NotebookLM is a grounded sidecar, not a substitute for quoting the source files directly in the review.

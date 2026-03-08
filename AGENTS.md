@@ -39,6 +39,10 @@ This command performs setup and deterministic phases:
 4. Run manuscript consistency lint (`review_consistency_lint.py`) for internal logic checks
 5. Verify references via CrossRef/OpenAlex/Semantic Scholar (`verify_references.py`)
 6. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `notebooklm/WORKFLOW.md`, `notebooklm/QUESTION_LOG.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
+7. Use `chunks/convolution_plan.md` to run workflow-specific overlap sweeps:
+   - `chunked`: chunk overlap
+   - `no-chunk`: paragraph/span overlap
+   - `pdf`: page overlap
 
 ## Manual Analysis Workflow (Codex)
 
@@ -65,6 +69,7 @@ python scripts/md_to_html.py reviews/<name>/output/review_EN.md
 ## Quality Rules
 
 - Ground every finding in exact source text from the converted markdown.
+- Use `chunks/convolution_plan.md` to sweep adjacent, local, and anchor windows before closing a pass.
 - Use NotebookLM as a grounded QA layer only; final findings still need exact source excerpts and file references.
 - Distinguish internal evidence from external knowledge.
 - Use severity labels: Critical, Major, Minor, Suggestion.

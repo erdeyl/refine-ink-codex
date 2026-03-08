@@ -21,6 +21,7 @@ For each review workspace:
 - `verification/consistency_lint_report.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json`
+- `chunks/convolution_plan.md`
 - `agent_outputs/*.md`
 - `notebooklm/WORKFLOW.md`
 - `notebooklm/QUESTION_LOG.md`

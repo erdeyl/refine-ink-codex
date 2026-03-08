@@ -273,6 +273,42 @@ def _group_chunk_ids(chunk_ids: list[str], group_size: int = 3) -> list[list[str
     return [chunk_ids[i : i + group_size] for i in range(0, len(chunk_ids), group_size)]
 
 
+def _sliding_windows(chunk_ids: list[str], window_size: int, stride: int = 1) -> list[list[str]]:
+    if not chunk_ids:
+        return []
+    if window_size <= 0:
+        window_size = 1
+    if stride <= 0:
+        stride = 1
+    if len(chunk_ids) <= window_size:
+        return [chunk_ids.copy()]
+    return [
+        chunk_ids[start : start + window_size]
+        for start in range(0, len(chunk_ids) - window_size + 1, stride)
+    ]
+
+
+def _dedupe_windows(windows: list[list[str]]) -> list[list[str]]:
+    seen: set[tuple[str, ...]] = set()
+    deduped: list[list[str]] = []
+    for window in windows:
+        key = tuple(window)
+        if not window or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(window)
+    return deduped
+
+
+def _centered_window(chunk_ids: list[str], center_index: int, radius: int = 1) -> list[str]:
+    if not chunk_ids:
+        return []
+    radius = max(0, radius)
+    start = max(0, center_index - radius)
+    end = min(len(chunk_ids), center_index + radius + 1)
+    return chunk_ids[start:end]
+
+
 def _heading_contains_any(heading: str, tokens: list[str]) -> bool:
     lowered = _normalize_match_text(heading)
     return any(_normalize_match_text(token) in lowered for token in tokens)
@@ -314,6 +350,281 @@ def _build_cross_section_pairs(chunks: list[dict[str, Any]]) -> list[list[str]]:
         pairs.append([chunks[0]["id"], chunks[-1]["id"]])
 
     return pairs
+
+
+def _build_chunk_units(chunks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {
+            "id": chunk["id"],
+            "label": chunk.get("heading", chunk["id"]),
+            "start_line": chunk.get("start_line"),
+            "end_line": chunk.get("end_line"),
+            "words": chunk.get("words", 0),
+            "has_equations": bool(chunk.get("has_equations")),
+            "has_tables": bool(chunk.get("has_tables")),
+            "has_figures": bool(chunk.get("has_figures")),
+            "is_references": bool(chunk.get("is_references")),
+            "is_abstract": bool(chunk.get("is_abstract")),
+        }
+        for chunk in chunks
+    ]
+
+
+def _paragraph_blocks(lines: list[str]) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    start_line: int | None = None
+    end_line: int | None = None
+    buffer: list[str] = []
+    for line_no, line in enumerate(lines, start=1):
+        if line.strip():
+            if start_line is None:
+                start_line = line_no
+            end_line = line_no
+            buffer.append(line)
+            continue
+        if buffer and start_line is not None and end_line is not None:
+            blocks.append(
+                {
+                    "start_line": start_line,
+                    "end_line": end_line,
+                    "text": "\n".join(buffer),
+                }
+            )
+            start_line = None
+            end_line = None
+            buffer = []
+    if buffer and start_line is not None and end_line is not None:
+        blocks.append(
+            {
+                "start_line": start_line,
+                "end_line": end_line,
+                "text": "\n".join(buffer),
+            }
+        )
+    return blocks
+
+
+def _derive_unit_label(text: str, start_line: int, end_line: int) -> str:
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        stripped = re.sub(r"^#{1,3}\s*", "", stripped)
+        return stripped[:80]
+    return f"Lines {start_line}-{end_line}"
+
+
+def _build_paragraph_units(lines: list[str], target_words: int = 220) -> list[dict[str, Any]]:
+    blocks = _paragraph_blocks(lines)
+    if not blocks:
+        return []
+
+    units: list[dict[str, Any]] = []
+    current_blocks: list[dict[str, Any]] = []
+    current_words = 0
+
+    def flush() -> None:
+        nonlocal current_blocks, current_words
+        if not current_blocks:
+            return
+        text = "\n\n".join(block["text"] for block in current_blocks)
+        start_line = current_blocks[0]["start_line"]
+        end_line = current_blocks[-1]["end_line"]
+        label = _derive_unit_label(text, start_line, end_line)
+        tags = detect_section_tags(label, text)
+        units.append(
+            {
+                "id": f"s{len(units) + 1}",
+                "label": label,
+                "start_line": start_line,
+                "end_line": end_line,
+                "words": count_words(text),
+                **tags,
+            }
+        )
+        current_blocks = []
+        current_words = 0
+
+    for block in blocks:
+        block_words = count_words(block["text"])
+        if (
+            current_blocks
+            and current_words >= max(120, target_words // 2)
+            and current_words + block_words > target_words
+        ):
+            flush()
+        current_blocks.append(block)
+        current_words += block_words
+
+    flush()
+    return units
+
+
+def _find_unit_index_by_label_tokens(
+    units: list[dict[str, Any]],
+    tokens: list[str],
+    *,
+    reverse: bool = False,
+) -> int | None:
+    iterable = range(len(units) - 1, -1, -1) if reverse else range(len(units))
+    for index in iterable:
+        if _heading_contains_any(units[index]["label"], tokens):
+            return index
+    return None
+
+
+def _build_anchor_windows(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not units:
+        return []
+
+    unit_ids = [unit["id"] for unit in units]
+    anchor_specs = [
+        (
+            "abstract-context",
+            next((idx for idx, unit in enumerate(units) if unit.get("is_abstract")), None),
+        ),
+        (
+            "introduction-context",
+            _find_unit_index_by_label_tokens(units, ["introduction", "bevezetés", "bevezetes"]),
+        ),
+        (
+            "methods-context",
+            _find_unit_index_by_label_tokens(
+                units,
+                ["method", "methodology", "identification", "model", "módszertan", "modszertan"],
+            ),
+        ),
+        (
+            "results-context",
+            _find_unit_index_by_label_tokens(
+                units,
+                ["result", "results", "findings", "discussion", "eredmény", "eredmeny", "eredmények"],
+            ),
+        ),
+        (
+            "conclusion-context",
+            _find_unit_index_by_label_tokens(
+                units,
+                ["conclusion", "conclusions", "discussion", "következtetés", "kovetkeztetes"],
+                reverse=True,
+            ),
+        ),
+        (
+            "references-context",
+            next((idx for idx, unit in enumerate(units) if unit.get("is_references")), None),
+        ),
+    ]
+
+    anchors: list[dict[str, Any]] = []
+    seen: set[tuple[str, ...]] = set()
+    for label, index in anchor_specs:
+        if index is None:
+            continue
+        window = _centered_window(unit_ids, index, radius=1)
+        key = tuple(window)
+        if not window or key in seen:
+            continue
+        seen.add(key)
+        anchors.append(
+            {
+                "label": label,
+                "center_unit_id": unit_ids[index],
+                "unit_ids": window,
+            }
+        )
+    return anchors
+
+
+def _build_signal_windows(units: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not units:
+        return []
+
+    unit_ids = [unit["id"] for unit in units]
+    signals: list[dict[str, Any]] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+
+    def add_signal(label: str, index: int) -> None:
+        window = _centered_window(unit_ids, index, radius=1)
+        key = (label, tuple(window))
+        if not window or key in seen:
+            return
+        seen.add(key)
+        signals.append(
+            {
+                "label": label,
+                "center_unit_id": unit_ids[index],
+                "unit_ids": window,
+            }
+        )
+
+    for index, unit in enumerate(units):
+        if unit.get("has_equations"):
+            add_signal("equation-context", index)
+        if unit.get("has_tables") or unit.get("has_figures"):
+            add_signal("empirical-context", index)
+        if unit.get("is_references"):
+            add_signal("reference-context", index)
+
+    return signals
+
+
+def _build_convolution_assignments(units: list[dict[str, Any]], strategy: str) -> dict[str, Any]:
+    unit_ids = [unit["id"] for unit in units]
+    if not unit_ids:
+        return {
+            "strategy": strategy,
+            "units": [],
+            "adjacent_pairs": [],
+            "local_windows": [],
+            "medium_windows": [],
+            "global_window": [],
+            "anchor_windows": [],
+            "signal_windows": [],
+            "coverage_by_unit": {},
+        }
+
+    adjacent_pairs = _dedupe_windows(_sliding_windows(unit_ids, 2, 1))
+    local_windows = _dedupe_windows(_sliding_windows(unit_ids, 3, 1))
+    medium_windows = _dedupe_windows(_sliding_windows(unit_ids, 5, 2))
+    global_window = [unit_ids.copy()]
+    anchor_windows = _build_anchor_windows(units)
+    signal_windows = _build_signal_windows(units)
+
+    coverage_by_unit: dict[str, dict[str, Any]] = {}
+    for unit_id in unit_ids:
+        coverage_by_unit[unit_id] = {
+            "adjacent_pairs": sum(1 for window in adjacent_pairs if unit_id in window),
+            "local_windows": sum(1 for window in local_windows if unit_id in window),
+            "medium_windows": sum(1 for window in medium_windows if unit_id in window),
+            "global_windows": 1,
+            "anchor_labels": [
+                entry["label"] for entry in anchor_windows if unit_id in entry["unit_ids"]
+            ],
+            "signal_labels": [
+                entry["label"] for entry in signal_windows if unit_id in entry["unit_ids"]
+            ],
+        }
+
+    return {
+        "strategy": strategy,
+        "units": [
+            {
+                "id": unit["id"],
+                "label": unit["label"],
+                "start_line": unit.get("start_line"),
+                "end_line": unit.get("end_line"),
+                "words": unit.get("words", 0),
+            }
+            for unit in units
+        ],
+        "adjacent_pairs": adjacent_pairs,
+        "local_windows": local_windows,
+        "medium_windows": medium_windows,
+        "global_window": global_window,
+        "anchor_windows": anchor_windows,
+        "signal_windows": signal_windows,
+        "coverage_by_unit": coverage_by_unit,
+    }
 
 
 def _assign_dimensions(chunks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -415,6 +726,10 @@ def _build_pdf_chunk_map(pdf_path: Path) -> dict[str, Any]:
         "total_chunks": len(chunks),
         "chunks": chunks,
         "dimension_assignments": _assign_dimensions(chunks),
+        "convolution_assignments": _build_convolution_assignments(
+            _build_chunk_units(chunks),
+            strategy="page-overlap",
+        ),
     }
 
 
@@ -447,6 +762,7 @@ def build_chunk_map(
             "total_chunks": 0,
             "chunks": [],
             "dimension_assignments": _assign_dimensions([]),
+            "convolution_assignments": _build_convolution_assignments([], strategy="empty"),
         }
 
     if chunking_mode == "no-chunk":
@@ -465,6 +781,10 @@ def build_chunk_map(
             "total_chunks": 1,
             "chunks": [single],
             "dimension_assignments": _single_chunk_assignments("c1"),
+            "convolution_assignments": _build_convolution_assignments(
+                _build_paragraph_units(lines),
+                strategy="paragraph-overlap",
+            ),
         }
 
     chunks: list[dict[str, Any]] = []
@@ -485,6 +805,10 @@ def build_chunk_map(
             "total_chunks": 1,
             "chunks": chunks,
             "dimension_assignments": _assign_dimensions(chunks),
+            "convolution_assignments": _build_convolution_assignments(
+                _build_paragraph_units(lines),
+                strategy="paragraph-overlap",
+            ),
         }
 
     first_heading_line = heading_rows[0][0]
@@ -528,6 +852,10 @@ def build_chunk_map(
         "total_chunks": len(chunks),
         "chunks": chunks,
         "dimension_assignments": _assign_dimensions(chunks),
+        "convolution_assignments": _build_convolution_assignments(
+            _build_chunk_units(chunks),
+            strategy="chunk-overlap",
+        ),
     }
 
 
@@ -601,6 +929,110 @@ def review_template(
 """
 
 
+def convolution_plan_template(chunk_map: dict[str, Any]) -> str:
+    convolution = chunk_map.get("convolution_assignments", {})
+    units = convolution.get("units", [])
+    strategy = convolution.get("strategy", "unknown")
+    unit_labels = {unit["id"]: unit.get("label", unit["id"]) for unit in units}
+
+    def fmt_window(window: list[str]) -> str:
+        labels = [f"{unit_id} ({unit_labels.get(unit_id, unit_id)})" for unit_id in window]
+        return " -> ".join(labels)
+
+    lines = [
+        "# Convolution Review Plan",
+        "",
+        "Use these overlap sweeps to review the manuscript at multiple context widths.",
+        f"Strategy: `{strategy}`.",
+        "This is a deterministic, convolution-style coverage plan: adjacent transitions, local windows, medium windows, then document-wide and anchor-targeted checks.",
+        "",
+        "## Sweeps",
+        "",
+        "### Adjacent Pairs",
+    ]
+
+    adjacent_pairs = convolution.get("adjacent_pairs", [])
+    if adjacent_pairs:
+        for window in adjacent_pairs:
+            lines.append(f"- {fmt_window(window)}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "### Local Windows", ""])
+    local_windows = convolution.get("local_windows", [])
+    if local_windows:
+        for window in local_windows:
+            lines.append(f"- {fmt_window(window)}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "### Medium Windows", ""])
+    medium_windows = convolution.get("medium_windows", [])
+    if medium_windows:
+        for window in medium_windows:
+            lines.append(f"- {fmt_window(window)}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "### Global Window", ""])
+    global_windows = convolution.get("global_window", [])
+    if global_windows:
+        for window in global_windows:
+            lines.append(f"- {fmt_window(window)}")
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "### Anchor Windows", ""])
+    anchor_windows = convolution.get("anchor_windows", [])
+    if anchor_windows:
+        for entry in anchor_windows:
+            lines.append(
+                f"- {entry['label']}: {fmt_window(entry.get('unit_ids', []))}"
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(["", "### Signal Windows", ""])
+    signal_windows = convolution.get("signal_windows", [])
+    if signal_windows:
+        for entry in signal_windows:
+            lines.append(
+                f"- {entry['label']} around {entry['center_unit_id']}: {fmt_window(entry.get('unit_ids', []))}"
+            )
+    else:
+        lines.append("- none")
+
+    lines.extend(
+        [
+            "",
+            "## Review Use",
+            "",
+            "- Adjacent pairs: check notation drift, unsupported transitions, and abrupt claim jumps.",
+            "- Local windows: check claim-evidence coherence over neighboring sections.",
+            "- Medium windows: check argument stability across methods/results/discussion spans.",
+            "- Anchor windows: prioritize abstract, methods, results, conclusion, and references context.",
+            "- Signal windows: intensify review around equations, empirical evidence, and references.",
+            "",
+            "## Coverage By Unit",
+            "",
+            "| Unit | Label | Adjacent | Local | Medium | Anchor Labels | Signal Labels |",
+            "|---|---|---:|---:|---:|---|---|",
+        ]
+    )
+
+    for unit in units:
+        coverage = convolution.get("coverage_by_unit", {}).get(unit["id"], {})
+        anchor_labels = ", ".join(coverage.get("anchor_labels", [])) or "none"
+        signal_labels = ", ".join(coverage.get("signal_labels", [])) or "none"
+        lines.append(
+            f"| {unit['id']} | {unit.get('label', unit['id'])} | "
+            f"{coverage.get('adjacent_pairs', 0)} | {coverage.get('local_windows', 0)} | "
+            f"{coverage.get('medium_windows', 0)} | {anchor_labels} | {signal_labels} |"
+        )
+
+    return "\n".join(lines).strip() + "\n"
+
+
 def next_steps_template(
     review_dir: Path,
     ref_summary: dict[str, int],
@@ -622,6 +1054,7 @@ Review workspace is ready at:
 - Chunking mode: `{chunking_mode}`
 - Consistency lint: {lint_summary['status']} ({lint_summary['finding_count']} findings)
 - Chunk map generated at `chunks/chunk_map.json` (`total_chunks`, `chunks`, `dimension_assignments`)
+- Convolution review guide generated at `chunks/convolution_plan.md`
 - References: {ref_summary['verified']} verified, {ref_summary['suspicious']} suspicious, {ref_summary['unverifiable']} unverifiable, {ref_summary['verification_errors']} verification errors
 
 ## Run qualitative analysis passes
@@ -654,6 +1087,7 @@ python scripts/md_to_html.py {review_dir}/output/review_EN.md
 ## Evidence discipline
 
 - Quote exact source text from `input/original_converted.md`
+- Use `chunks/convolution_plan.md` to run adjacent, local, medium, and anchor sweeps before finalizing findings
 - Use `notebooklm/WORKFLOW.md` after preparation, before closing each analysis pass, and again before final synthesis
 - Record material NotebookLM MCP interactions in `notebooklm/QUESTION_LOG.md`
 - Review `verification/consistency_lint_report.json` and resolve/confirm each flagged issue
@@ -677,7 +1111,8 @@ Create/update a notebook containing:
 4. `{review_dir}/verification/consistency_lint_report.json`
 5. `{review_dir}/verification/reference_report.json`
 6. `{review_dir}/chunks/chunk_map.json`
-7. `agent_outputs/*.md` as soon as you start writing pass outputs
+7. `{review_dir}/chunks/convolution_plan.md`
+8. `agent_outputs/*.md` as soon as you start writing pass outputs
 
 ## Phase 1: Grounding After Preparation
 
@@ -686,6 +1121,16 @@ Ask NotebookLM MCP:
 - "Summarize the paper's research question, identification/design, and main conclusion in five bullets with citations."
 - "List any places where the PDF text and converted markdown appear inconsistent or incomplete."
 - "Which sections, tables, and figures are central to the paper's main claim?"
+
+## Phase 1B: Convolution Sweep
+
+Use `chunks/convolution_plan.md` and ask:
+
+- "Across each adjacent pair, where do notation, claims, or transitions drift?"
+- "Across each local window, which claims are unsupported by nearby evidence?"
+- "Across each medium window, where does the argument weaken, reverse, or overstate?"
+- "Is this workflow using chunk-overlap, paragraph-overlap, or page-overlap, and what blind spots does that create?"
+- "Which anchor or signal windows deserve the strictest manual review?"
 
 ## Phase 2: Analysis Pass Support
 
@@ -865,6 +1310,11 @@ def prepare_review(args: argparse.Namespace) -> int:
     chunk_map = build_chunk_map(converted_md, chunking_mode=chunking_mode, pdf_path=original_pdf)
     chunk_map_path = chunks_dir / "chunk_map.json"
     write_json(chunk_map_path, chunk_map)
+    convolution_plan_path = chunks_dir / "convolution_plan.md"
+    convolution_plan_path.write_text(
+        convolution_plan_template(chunk_map),
+        encoding="utf-8",
+    )
 
     lint_report = lint_markdown(converted_md.read_text(encoding="utf-8"))
     lint_report_path = verification_dir / "consistency_lint_report.json"
@@ -915,7 +1365,12 @@ def prepare_review(args: argparse.Namespace) -> int:
         "chunking": {
             "mode": chunking_mode,
             "chunk_map_path": str(chunk_map_path),
+            "convolution_plan_path": str(convolution_plan_path),
             "total_chunks": chunk_map.get("total_chunks", 0),
+            "convolution_strategy": chunk_map.get("convolution_assignments", {}).get("strategy"),
+            "convolution_units": len(
+                chunk_map.get("convolution_assignments", {}).get("units", [])
+            ),
         },
         "reference_verification": {
             **ref_summary,

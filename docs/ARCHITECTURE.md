@@ -28,6 +28,7 @@ PDF input
 [Phase 4] codex_prepare_review.py scaffolding
   -> chunks/chunk_map.json
      (total_chunks + chunks + dimension_assignments)
+  -> chunks/convolution_plan.md
   -> agent_outputs/*.md stubs
   -> notebooklm/WORKFLOW.md
   -> notebooklm/QUESTION_LOG.md
@@ -97,6 +98,16 @@ NotebookLM is treated as a grounded QA sidecar rather than a deterministic trans
 - During three-mode comparison: use the comparison workspace `notebooklm/WORKFLOW.md` to compare chunked, no-chunk, and PDF-native outputs against the original PDF
 
 The generated `notebooklm/QUESTION_LOG.md` provides a lightweight audit trail for material NotebookLM interactions.
+
+## Convolution Review Layer
+
+The workflow now adds a deterministic multi-scale overlap plan to every review workspace:
+
+- `chunked` workflow: chunk-overlap windows across structural sections
+- `no-chunk` workflow: paragraph/span-overlap windows inside the full document
+- `pdf` workflow: page-overlap windows across PDF-native page chunks
+
+This layer is written to `chunks/convolution_plan.md` and mirrored in `chunk_map.json` as `convolution_assignments`.
 
 ## Analysis Dimensions
 

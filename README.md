@@ -13,6 +13,7 @@
 - Reference verification against CrossRef, OpenAlex, and Semantic Scholar
 - Codex-ready review workspace scaffolding (`chunks`, `agent_outputs`, `output`)
 - NotebookLM sidecar scaffolding for grounded contradiction checks and synthesis QA
+- Convolution-style review coverage plans across chunked, no-chunk, and PDF-native workflows
 - Structured report and manifest templates for reproducible audits
 - Styled HTML rendering of final Markdown reports
 
@@ -75,6 +76,7 @@ Each prepared review contains:
 - `verification/consistency_lint_report.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
+- `chunks/convolution_plan.md`
 - `agent_outputs/*.md` (scaffolded)
 - `notebooklm/WORKFLOW.md`
 - `notebooklm/QUESTION_LOG.md`

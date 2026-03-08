@@ -245,6 +245,7 @@ Use NotebookLM as a grounded comparison layer across workflow modes. Keep the or
 Ask NotebookLM MCP:
 
 - "Which workflow preserved the paper's title, abstract, section boundaries, tables, and references best?"
+- "How do chunk-overlap, paragraph-overlap, and page-overlap change what each workflow is likely to miss?"
 - "Where do the workflow outputs disagree about what the paper actually says?"
 - "Which verification warnings matter most for selecting the primary workflow?"
 

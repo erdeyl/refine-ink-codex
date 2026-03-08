@@ -93,6 +93,7 @@ class RunJointWorkflowReviewTests(unittest.TestCase):
         )
 
         self.assertIn("/tmp/paper.pdf", workflow)
+        self.assertIn("chunk-overlap, paragraph-overlap, and page-overlap", workflow)
         self.assertIn("workflow_comparison.md", workflow)
         self.assertIn("/tmp/review-a/input/original_converted.md", workflow)
         self.assertNotIn("None", workflow)
