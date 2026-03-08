@@ -2,6 +2,8 @@
 
 The Codex workflow uses nine analysis dimensions. These are not hard-coded model agents; they are structured review passes you execute in `agent_outputs/`.
 
+Before closing any pass, use the NotebookLM MCP guidance in `notebooklm/WORKFLOW.md`, run the overlap sweeps in `chunks/convolution_plan.md`, and record material exchanges in `notebooklm/QUESTION_LOG.md`. Treat NotebookLM as a grounded contradiction-checking layer, not as a replacement for direct source quotation.
+
 ## Overview
 
 | Pass | Focus | Primary Output |
@@ -68,6 +70,7 @@ Detect readability issues, ambiguous phrasing, and register inconsistencies. For
 ## Quality Rules
 
 - Every claim must be grounded in text from `input/original_converted.md`
+- NotebookLM can challenge a claim, but the review must still quote the underlying source files directly
 - Distinguish observed fact from inference
 - Keep uncertain claims in a low-confidence appendix
 - Do not edit input files under `input/`

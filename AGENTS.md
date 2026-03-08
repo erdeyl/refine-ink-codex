@@ -28,7 +28,8 @@ In the ChatGPT Codex app, treat `/review` as the review command:
    - If multiple PDFs are available, ask the user to choose one.
 4. Run:
    - `python scripts/codex_prepare_review.py "<resolved_pdf_path>"`
-5. Continue with analysis passes from the generated review workspace.
+5. Open `notebooklm/WORKFLOW.md` in the generated review workspace and use NotebookLM MCP during grounding, pass drafting, and synthesis.
+6. Continue with analysis passes from the generated review workspace.
 
 This command performs setup and deterministic phases:
 
@@ -37,12 +38,18 @@ This command performs setup and deterministic phases:
 3. Verify conversion fidelity (`verify_conversion.py` logic)
 4. Run manuscript consistency lint (`review_consistency_lint.py`) for internal logic checks
 5. Verify references via CrossRef/OpenAlex/Semantic Scholar (`verify_references.py`)
-6. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
+6. Generate scaffold outputs (`chunks/chunk_map.json` with dimension assignments, `agent_outputs/*.md`, `notebooklm/WORKFLOW.md`, `notebooklm/QUESTION_LOG.md`, `output/review_EN.md`, `output/manifest.json`, `NEXT_STEPS.md`)
+7. Use `chunks/convolution_plan.md` to run workflow-specific overlap sweeps:
+   - `chunked`: chunk overlap
+   - `no-chunk`: paragraph/span overlap
+   - `pdf`: page overlap
 
 ## Manual Analysis Workflow (Codex)
 
 After preparation, complete qualitative analysis in passes and save outputs:
 
+- `notebooklm/WORKFLOW.md` guides the NotebookLM MCP prompts for grounding, contradiction checks, and final synthesis QA
+- `notebooklm/QUESTION_LOG.md` records material NotebookLM exchanges that influenced the review
 - `agent_outputs/math-logic.md`
 - `agent_outputs/notation.md`
 - `agent_outputs/exposition.md`
@@ -62,6 +69,8 @@ python scripts/md_to_html.py reviews/<name>/output/review_EN.md
 ## Quality Rules
 
 - Ground every finding in exact source text from the converted markdown.
+- Use `chunks/convolution_plan.md` to sweep adjacent, local, and anchor windows before closing a pass.
+- Use NotebookLM as a grounded QA layer only; final findings still need exact source excerpts and file references.
 - Distinguish internal evidence from external knowledge.
 - Use severity labels: Critical, Major, Minor, Suggestion.
 - Include confidence scores per finding (0-100).
@@ -79,6 +88,8 @@ Each review directory should include:
 - `verification/reference_report.json`
 - `chunks/chunk_map.json`
 - `agent_outputs/*.md`
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
 - `output/review_EN.md`
 - `output/manifest.json`
 - `NEXT_STEPS.md`

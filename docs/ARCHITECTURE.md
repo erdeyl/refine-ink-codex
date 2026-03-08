@@ -28,19 +28,28 @@ PDF input
 [Phase 4] codex_prepare_review.py scaffolding
   -> chunks/chunk_map.json
      (total_chunks + chunks + dimension_assignments)
+  -> chunks/convolution_plan.md
   -> agent_outputs/*.md stubs
+  -> notebooklm/WORKFLOW.md
+  -> notebooklm/QUESTION_LOG.md
   -> output/review_EN.md template
   -> output/manifest.json
   -> NEXT_STEPS.md
   |
   v
-[Phase 5] Codex analysis passes
+[Phase 5] NotebookLM grounded QA sidecar
+  -> contradiction checks
+  -> source-grounded questions
+  -> synthesis challenge log
+  |
+  v
+[Phase 6] Codex analysis passes
   -> math-logic, notation, exposition, empirical,
      cross-section, econometrics, literature,
      references, language
   |
   v
-[Phase 6] Synthesis + HTML rendering
+[Phase 7] Synthesis + HTML rendering
   -> output/review_EN.md(.html)
   -> optional review_HU.md(.html)
 ```
@@ -55,6 +64,8 @@ PDF input
 
 - `workflow_comparison.json/.md`
 - `joint_review.md`
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
 
 ## Deterministic Components
 
@@ -74,7 +85,29 @@ Each run creates `reviews/<slug>_<date>/`:
 - `verification/`: conversion/reference verification JSON
 - `chunks/`: structural chunk map for analysis targeting
 - `agent_outputs/`: per-dimension findings files
+- `notebooklm/`: NotebookLM MCP prompts and analyst question log
 - `output/`: final review artifacts (`review_EN.md`, optional HU, HTML, `manifest.json`)
+
+## NotebookLM Integration
+
+NotebookLM is treated as a grounded QA sidecar rather than a deterministic transformation step.
+
+- After preparation: use `notebooklm/WORKFLOW.md` to ingest the PDF, converted markdown, verification JSON, and chunk map
+- During analysis passes: use NotebookLM to surface contradictions, unsupported claims, and missing evidence before closing each pass file
+- During synthesis: use NotebookLM to challenge draft reviewer claims against the source pack
+- During three-mode comparison: use the comparison workspace `notebooklm/WORKFLOW.md` to compare chunked, no-chunk, and PDF-native outputs against the original PDF
+
+The generated `notebooklm/QUESTION_LOG.md` provides a lightweight audit trail for material NotebookLM interactions.
+
+## Convolution Review Layer
+
+The workflow now adds a deterministic multi-scale overlap plan to every review workspace:
+
+- `chunked` workflow: chunk-overlap windows across structural sections
+- `no-chunk` workflow: paragraph/span-overlap windows inside the full document
+- `pdf` workflow: page-overlap windows across PDF-native page chunks
+
+This layer is written to `chunks/convolution_plan.md` and mirrored in `chunk_map.json` as `convolution_assignments`.
 
 ## Analysis Dimensions
 

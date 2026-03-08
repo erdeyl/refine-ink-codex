@@ -18,9 +18,13 @@ For each review workspace:
 - `input/original_converted.md`
 - `input/original_references.json`
 - `verification/original_verification.json`
+- `verification/consistency_lint_report.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json`
+- `chunks/convolution_plan.md`
 - `agent_outputs/*.md`
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
 - `output/review_EN.md` (plus optional HU/HTML)
 - `output/manifest.json`
 
@@ -33,6 +37,7 @@ For each review workspace:
 - conversion status and report path
 - reference verification summary and report path
 - chunking summary (`chunk_map_path`, `total_chunks`)
+- NotebookLM scaffold paths (`notebooklm.workflow`, `notebooklm.question_log`)
 - output targets (`review_markdown`, `next_steps`, `agent_outputs`)
 
 ## Deterministic Reproduction
@@ -48,6 +53,7 @@ Then compare these files across runs:
 - `verification/original_verification.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json`
+- `notebooklm/WORKFLOW.md`
 - `output/manifest.json`
 
 ## Finding Traceability Procedure
@@ -55,12 +61,14 @@ Then compare these files across runs:
 For any final claim in `output/review_EN.md`:
 
 1. Locate supporting evidence in `agent_outputs/*.md`
-2. Confirm source text in `input/original_converted.md`
-3. If reference-related, validate status in `verification/reference_report.json`
-4. Ensure final confidence/severity are consistent with evidence quality
+2. If NotebookLM materially influenced the claim, inspect the relevant row in `notebooklm/QUESTION_LOG.md`
+3. Confirm source text in `input/original_converted.md`
+4. If reference-related, validate status in `verification/reference_report.json`
+5. Ensure final confidence/severity are consistent with evidence quality
 
 ## Limits of the Audit Trail
 
 - Deterministic scripts are reproducible; qualitative judgment remains analyst-dependent
+- NotebookLM outputs are source-grounded but still require analyst judgment and logging discipline
 - API-backed reference checks may differ over time as external indexes update
 - `WARN` conversion status indicates possible extraction imperfections

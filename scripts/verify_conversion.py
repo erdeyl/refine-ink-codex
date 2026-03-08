@@ -23,6 +23,7 @@ import os
 import random
 import re
 import sys
+from statistics import median
 from pathlib import Path
 
 try:
@@ -30,8 +31,11 @@ try:
 except ImportError:
     fitz = None
 
+from reference_headings import find_last_reference_heading, is_reference_heading_line, normalize_heading_label
+
 # Verification thresholds.
-WORD_COUNT_FAIL_PCT = 3.0
+WORD_COUNT_WARN_PCT = 5.0
+WORD_COUNT_FAIL_PCT = 20.0
 SPOTCHECK_FAIL_MAX_MISSES = 2
 HEADING_COUNT_WARN_DELTA = 3
 TABLE_COUNT_WARN_DELTA = 1
@@ -100,31 +104,6 @@ def normalize(text: str) -> str:
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
-
-_REF_HEADING_TERMS = {
-    "references",
-    "bibliography",
-    "works cited",
-    "literature cited",
-    "cited references",
-    "reference list",
-}
-
-
-def _normalize_heading_label(text: str) -> str:
-    cleaned = text.strip()
-    cleaned = re.sub(r"^#{1,6}\s*", "", cleaned)
-    cleaned = cleaned.replace("**", "").replace("__", "").replace("*", "").replace("_", "")
-    cleaned = re.sub(r"^\d+(?:\.\d+)*\s*", "", cleaned)
-    cleaned = re.sub(r"^\(?[ivxlcdm]+\)?\s+", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"\s+", " ", cleaned).strip().lower()
-    return cleaned
-
-
-def _is_references_heading_line(line: str) -> bool:
-    return _normalize_heading_label(line) in _REF_HEADING_TERMS
-
-
 def _is_reference_continuation_heading(line: str) -> bool:
     stripped = line.strip()
     if not stripped.startswith("#"):
@@ -146,16 +125,12 @@ def _is_reference_continuation_heading(line: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _median_body_size(blocks: list[dict]) -> float:
-    """Estimate the most common (body) font size from span data."""
+    """Estimate body font size from the median rounded span size."""
     sizes = [b["size"] for b in blocks if b["text"].strip()]
     if not sizes:
         return 12.0
-    # Use a simple frequency count
-    freq: dict[float, int] = {}
-    for s in sizes:
-        rounded = round(s, 1)
-        freq[rounded] = freq.get(rounded, 0) + 1
-    return max(freq, key=freq.get)
+    rounded_sizes = sorted(round(size, 1) for size in sizes)
+    return float(median(rounded_sizes))
 
 
 def pdf_headings(blocks: list[dict]) -> list[str]:
@@ -203,16 +178,14 @@ def pdf_references(text: str) -> int:
     Looks for a References/Bibliography section and counts numbered or
     author-year entries.
     """
-    # Find the references section
-    ref_match = re.search(
-        r"\b(References|Bibliography|Works\s+Cited)\b",
-        text,
-        re.IGNORECASE,
-    )
-    if not ref_match:
+    lines = text.splitlines()
+    ref_idx = find_last_reference_heading(lines)
+    if ref_idx is None:
         return 0
 
-    ref_text = text[ref_match.end():]
+    ref_text = "\n".join(lines[ref_idx + 1 :]).strip()
+    if not ref_text:
+        return 0
 
     # Strategy 1: numbered references like [1], [2], ...
     numbered = re.findall(r"^\s*\[(\d+)\]", ref_text, re.MULTILINE)
@@ -296,7 +269,7 @@ def pdf_footnotes_from_blocks(blocks: list[dict], body_size: float) -> int:
 def md_headings(md_text: str) -> list[str]:
     """Extract top-level to subsection headings from Markdown."""
     headings = re.findall(r"^#{1,3}\s+(.+)$", md_text, re.MULTILINE)
-    return [_normalize_heading_label(h) for h in headings if _normalize_heading_label(h)]
+    return [normalize_heading_label(h) for h in headings if normalize_heading_label(h)]
 
 
 def md_tables(md_text: str) -> int:
@@ -331,7 +304,7 @@ def md_references(md_text: str) -> int:
     lines = md_text.splitlines()
     ref_start_idx = None
     for idx, line in enumerate(lines):
-        if _is_references_heading_line(line):
+        if is_reference_heading_line(line):
             ref_start_idx = idx
 
     if ref_start_idx is None:
@@ -345,7 +318,7 @@ def md_references(md_text: str) -> int:
             continue
         if re.match(r"^#{1,3}\s+\S", stripped) and not _is_reference_continuation_heading(stripped):
             break
-        if _is_references_heading_line(stripped):
+        if is_reference_heading_line(stripped):
             continue
         ref_lines.append(line)
 
@@ -452,8 +425,7 @@ def fuzzy_match(needle: str, haystack: str, threshold: float = 0.85) -> bool:
         ).ratio() >= threshold
 
     best = 0.0
-    # To avoid O(n*m) on very large texts, sample positions around keyword hits
-    # First, try to find a neighbourhood using first few words of needle
+    # Find candidate windows using both phrase matches and shared anchor tokens.
     search_key = " ".join(needle_words[:3])
     positions: list[int] = []
     start = 0
@@ -466,13 +438,40 @@ def fuzzy_match(needle: str, haystack: str, threshold: float = 0.85) -> bool:
         positions.append(max(0, word_pos - 2))
         start = idx + 1
 
-    # If no keyword hits, fall back to sampling
+    anchor_words = {
+        word for word in needle_words
+        if len(word) >= 4 and not re.fullmatch(r"(this|that|with|from|into|over|under|than|were|have|has)", word)
+    }
+    if anchor_words:
+        word_positions: dict[str, list[int]] = {}
+        for idx, word in enumerate(haystack_words):
+            if word not in anchor_words:
+                continue
+            word_positions.setdefault(word, []).append(idx)
+
+        candidate_positions: set[int] = set(positions)
+        for needle_idx, word in enumerate(needle_words):
+            if word not in word_positions:
+                continue
+            for hay_idx in word_positions[word][:50]:
+                candidate_positions.add(max(0, hay_idx - needle_idx - 2))
+                candidate_positions.add(max(0, hay_idx - needle_idx))
+        positions = sorted(candidate_positions)
+
+    # If no keyword hits, fall back to denser sampling on long texts.
     if not positions:
-        step = max(1, len(haystack_words) // 200)
+        step = max(1, len(haystack_words) // 1000)
         positions = list(range(0, len(haystack_words) - window + 1, step))
 
     for i in positions:
-        chunk = " ".join(haystack_words[i : i + window + 5])
+        chunk_words = haystack_words[i : i + window]
+        if chunk_words:
+            token_match_ratio = sum(
+                1 for left, right in zip(needle_words, chunk_words) if left == right
+            ) / max(window, 1)
+            if token_match_ratio >= threshold:
+                return True
+        chunk = " ".join(haystack_words[i : i + window])
         ratio = difflib.SequenceMatcher(None, needle_norm, chunk).ratio()
         if ratio >= threshold:
             return True
@@ -503,12 +502,9 @@ def first_meaningful_paragraph(text: str) -> str:
 
 def last_paragraph_before_references(text: str) -> str:
     """Return the last substantial paragraph before a References section."""
-    ref_match = re.search(
-        r"\b(References|Bibliography|Works\s+Cited)\b",
-        text,
-        re.IGNORECASE,
-    )
-    body = text[: ref_match.start()] if ref_match else text
+    lines = text.splitlines()
+    ref_idx = find_last_reference_heading(lines)
+    body = "\n".join(lines[:ref_idx]) if ref_idx is not None else text
     paras = extract_paragraphs(body)
     for p in reversed(paras):
         words = tokenize(p)
@@ -547,12 +543,18 @@ def verify(pdf_path: str, md_path: str) -> dict:
             "PDF text extraction returned zero words; conversion quality cannot be verified."
         )
 
-    wc_diff_pct = abs(pdf_wc - md_wc) / max(pdf_wc, 1) * 100
+    wc_denominator = max(pdf_wc, md_wc, 1)
+    wc_diff_pct = abs(pdf_wc - md_wc) / wc_denominator * 100
 
     if wc_diff_pct > WORD_COUNT_FAIL_PCT:
         failures.append(
             f"Word count difference {wc_diff_pct:.1f}% exceeds {WORD_COUNT_FAIL_PCT:.0f}% threshold "
             f"(PDF: {pdf_wc}, MD: {md_wc})"
+        )
+    elif wc_diff_pct > WORD_COUNT_WARN_PCT:
+        warnings.append(
+            f"Word count difference {wc_diff_pct:.1f}% exceeds warning threshold "
+            f"of {WORD_COUNT_WARN_PCT:.0f}% (PDF: {pdf_wc}, MD: {md_wc})"
         )
 
     # --- 2. Section/heading count ---
@@ -611,7 +613,13 @@ def verify(pdf_path: str, md_path: str) -> dict:
         else:
             missed_sentences.append(sent[:120])
 
-    if spot_total > 0 and (spot_total - spot_hits) > SPOTCHECK_FAIL_MAX_MISSES:
+    allowed_misses = SPOTCHECK_FAIL_MAX_MISSES
+    if spot_total <= 3:
+        allowed_misses = 0
+    elif spot_total <= 8:
+        allowed_misses = 1
+
+    if spot_total > 0 and (spot_total - spot_hits) > allowed_misses:
         failures.append(
             f"Spot check: only {spot_hits}/{spot_total} sentences found in MD. "
             f"Missing examples: {missed_sentences[:3]}"

@@ -15,6 +15,7 @@ Optional:
 | Requirement | Purpose |
 |---|---|
 | Semantic Scholar API key | Higher throughput for reference verification |
+| NotebookLM MCP in Codex | Grounded text-analysis sidecar during review and synthesis |
 
 ## 1. Clone
 
@@ -37,7 +38,7 @@ Installed packages:
 - `pymupdf` for direct PDF text/table extraction in verification
 - `httpx` for async API requests
 - `markdown` and `jinja2` for HTML rendering
-- `bleach` for report HTML sanitization
+- `nh3` (preferred) and `bleach` (fallback) for report HTML sanitization
 
 ## 3. (Optional) Set Semantic Scholar API Key
 
@@ -45,13 +46,20 @@ Installed packages:
 export S2_API_KEY="your_api_key_here"
 ```
 
-You can also pass it per run:
+The workflow reads this from the environment only to avoid leaking secrets via shell history or process lists.
 
-```bash
-python scripts/codex_prepare_review.py path/to/paper.pdf --s2-api-key your_api_key_here
-```
+## 4. (Optional) Configure NotebookLM MCP In Codex
 
-## 4. Verify Installation
+This repository does not vendor a NotebookLM client. Configure NotebookLM in your Codex environment separately if it is available there.
+
+Once configured, each prepared review workspace includes:
+
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
+
+Use NotebookLM after deterministic preparation, during each analysis pass, and again before final synthesis or joint workflow comparison.
+
+## 5. Verify Installation
 
 ```bash
 python scripts/codex_prepare_review.py --help
@@ -61,7 +69,7 @@ python scripts/verify_references.py --help
 python scripts/md_to_html.py --help
 ```
 
-## 5. First Run
+## 6. First Run
 
 ```bash
 python scripts/codex_prepare_review.py [path/to/paper.pdf] --email you@example.com

@@ -43,6 +43,11 @@ Zhu, M. (2025). Impact on global value chains.
         repaired = converter._repair_split_doi(text)
         self.assertIn("10.1080/1226508X.2024.2388514", repaired)
 
+    def test_parse_reference_does_not_duplicate_title_into_journal(self) -> None:
+        ref = converter._parse_reference("Smith, J. (2024). *Only One Italic Block*.")
+        self.assertEqual(ref["title"], "Only One Italic Block")
+        self.assertEqual(ref["journal"], "")
+
 
 if __name__ == "__main__":
     unittest.main()

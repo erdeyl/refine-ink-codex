@@ -23,6 +23,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from reference_headings import is_reference_heading_line, normalize_heading_label
+
 
 # ---------------------------------------------------------------------------
 # Exit codes
@@ -36,15 +38,6 @@ EXIT_IO_ERROR = 3           # cannot write output
 # ---------------------------------------------------------------------------
 # Reference extraction helpers
 # ---------------------------------------------------------------------------
-
-_REF_HEADING_TERMS = {
-    "references",
-    "bibliography",
-    "works cited",
-    "literature cited",
-    "cited references",
-    "reference list",
-}
 
 # Headings that would mark the END of the references section
 _NEXT_SECTION_RE = re.compile(
@@ -117,17 +110,11 @@ def _find_references_section(md_text: str) -> Optional[str]:
 
 
 def _normalize_heading_line(line: str) -> str:
-    stripped = line.strip()
-    stripped = re.sub(r"^#{1,6}\s*", "", stripped)
-    stripped = stripped.replace("**", "").replace("__", "").replace("*", "").replace("_", "")
-    stripped = re.sub(r"^\d+(?:\.\d+)*\s*", "", stripped)
-    stripped = re.sub(r"^\(?[ivxlcdm]+\)?\s+", "", stripped, flags=re.IGNORECASE)
-    stripped = re.sub(r"\s+", " ", stripped).strip().lower()
-    return stripped
+    return normalize_heading_label(line)
 
 
 def _is_reference_heading_line(line: str) -> bool:
-    return _normalize_heading_line(line) in _REF_HEADING_TERMS
+    return is_reference_heading_line(line)
 
 
 def _is_next_section_heading(line: str) -> bool:
@@ -305,6 +292,10 @@ def _parse_reference(raw_text: str) -> dict:
     cleaned_text = _repair_split_doi(raw_text)
     doi_match = _DOI_RE.search(cleaned_text)
     year_match = _YEAR_RE.search(cleaned_text)
+    extracted_title = _extract_title(cleaned_text)
+    extracted_journal = _extract_journal(cleaned_text)
+    if extracted_journal and extracted_journal == extracted_title:
+        extracted_journal = ""
     cleaned_doi = ""
     if doi_match:
         cleaned_doi = (
@@ -316,11 +307,11 @@ def _parse_reference(raw_text: str) -> dict:
         )
 
     return {
-        "title": _extract_title(cleaned_text),
+        "title": extracted_title,
         "authors": _extract_authors(cleaned_text),
         "year": year_match.group(1) if year_match else "",
         "doi": cleaned_doi,
-        "journal": _extract_journal(cleaned_text),
+        "journal": extracted_journal,
         "raw_text": cleaned_text.strip(),
     }
 
@@ -368,9 +359,8 @@ def _extract_references_from_pdf_text(pdf_path: Path) -> list[dict]:
         return []
 
     try:
-        doc = pymupdf.open(str(pdf_path))
-        pdf_text = "\n".join(page.get_text("text") for page in doc)
-        doc.close()
+        with pymupdf.open(str(pdf_path)) as doc:
+            pdf_text = "\n".join(page.get_text("text") for page in doc)
     except Exception:
         return []
 
@@ -531,9 +521,8 @@ def convert_pdf(pdf_path: Path, output_dir: Optional[Path] = None) -> int:
 
     # Get page count from PyMuPDF directly
     try:
-        doc = pymupdf.open(str(pdf_path))
-        page_count = doc.page_count
-        doc.close()
+        with pymupdf.open(str(pdf_path)) as doc:
+            page_count = doc.page_count
     except Exception:
         page_count = 0
 

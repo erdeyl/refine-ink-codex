@@ -8,7 +8,7 @@ Chunking in the Codex workflow is deterministic and lightweight. It does not per
 
 ## How Chunking Works
 
-`codex_prepare_review.py` computes `chunks/chunk_map.json` in four steps:
+`codex_prepare_review.py` computes `chunks/chunk_map.json` in five steps:
 
 1. Parse the converted markdown (`input/original_converted.md`)
 2. Detect headings with regex `^(#{1,3})\s+(.+?)$`
@@ -19,6 +19,7 @@ Chunking in the Codex workflow is deterministic and lightweight. It does not per
    - `has_figures`
    - `is_references`
    - `is_abstract`
+5. Build workflow-specific convolution assignments for overlap sweeps
 
 If no headings are found, a single `Document` chunk is created.
 
@@ -54,6 +55,22 @@ If no headings are found, a single `Document` chunk is created.
     "literature": [],
     "references": ["c3"],
     "language": [["c1", "c2", "c3"]]
+  },
+  "convolution_assignments": {
+    "strategy": "chunk-overlap",
+    "units": [
+      {
+        "id": "c1",
+        "label": "Introduction",
+        "start_line": 12,
+        "end_line": 78,
+        "words": 1042
+      }
+    ],
+    "adjacent_pairs": [["c1", "c2"]],
+    "local_windows": [["c1", "c2", "c3"]],
+    "medium_windows": [["c1", "c2", "c3"]],
+    "global_window": [["c1", "c2", "c3"]]
   }
 }
 ```
@@ -72,9 +89,29 @@ Assignments are metadata-only and generated with deterministic rules:
 
 Heading keyword matching is diacritic-insensitive, so Hungarian headings match whether accents are present or omitted.
 
+## Convolution Assignments
+
+Every workflow now generates a deterministic overlap plan:
+
+- `chunk-overlap`: used for heading-based chunked workflows
+- `paragraph-overlap`: used for no-chunk workflows and headingless markdown documents
+- `page-overlap`: used for PDF-native page chunking
+
+The overlap plan includes:
+
+- `units`: the review units used for the overlap strategy
+- `adjacent_pairs`: pairwise local transitions
+- `local_windows`: size-3 overlap sweeps
+- `medium_windows`: size-5 overlap sweeps with stride 2
+- `global_window`: document-wide sweep
+- `anchor_windows`: abstract/introduction/methods/results/conclusion/references context windows when detectable
+- `signal_windows`: equation, empirical, and reference-centered windows
+- `coverage_by_unit`: how many sweeps touch each review unit
+
+These assignments are rendered into `chunks/convolution_plan.md` for human use and NotebookLM prompting.
+
 ## Limits
 
-- No token-budget optimization or overlap windows are applied
 - No chapter-aware adaptive splitting is currently implemented
 - Assignments are heuristic guidance, not guaranteed semantic routing
 

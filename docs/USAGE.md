@@ -24,10 +24,11 @@ Optional flags:
 - `--reviews-dir reviews_alt`
 - `--name custom-paper-slug`
 - `--skip-references`
-- `--s2-api-key ...`
 - `--force`
 - `--chunking chunked|no-chunk|pdf`
 - `--pdf-native-only`
+
+Set `S2_API_KEY` in the environment for Semantic Scholar authenticated access.
 
 Three-mode orchestration (chunked + no-chunk + pdf-native/pdf-chunking):
 
@@ -45,6 +46,7 @@ reviews/<paper>_<YYYY-MM-DD>/
   verification/
   chunks/
   agent_outputs/
+  notebooklm/
   output/
   NEXT_STEPS.md
 ```
@@ -56,13 +58,32 @@ Key files:
 - `verification/original_verification.json`
 - `verification/reference_report.json`
 - `chunks/chunk_map.json` (`total_chunks`, `chunks[]`, `dimension_assignments`)
+- `chunks/convolution_plan.md`
+- `notebooklm/WORKFLOW.md`
+- `notebooklm/QUESTION_LOG.md`
 - `output/review_EN.md`
 - `output/manifest.json`
 - comparison runner outputs:
   - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/workflow_comparison.md`
   - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/joint_review.md`
+  - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/notebooklm/WORKFLOW.md`
+  - `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/notebooklm/QUESTION_LOG.md`
 
-## 3. Complete Analysis Passes
+## 3. Run NotebookLM Grounded QA
+
+If your Codex environment has NotebookLM MCP configured, use the generated guidance before and during analysis:
+
+- upload the workspace source pack listed in `notebooklm/WORKFLOW.md`
+- ask NotebookLM for contradictions, unsupported claims, and section-to-section inconsistencies
+- follow `chunks/convolution_plan.md` for workflow-specific overlap sweeps:
+  - `chunked`: heading-chunk overlap
+  - `no-chunk`: paragraph/span overlap
+  - `pdf`: page overlap
+- log material exchanges in `notebooklm/QUESTION_LOG.md`
+
+NotebookLM is a grounded sidecar, not a substitute for quoting the source files directly in the review.
+
+## 4. Complete Analysis Passes
 
 Fill findings in:
 
@@ -83,7 +104,9 @@ Guidelines:
 - Assign confidence (0-100)
 - Keep uncertain claims in a low-confidence appendix
 
-## 4. Produce Final Report
+Before closing each pass, use NotebookLM to challenge the draft against the uploaded source pack and record any material follow-up.
+
+## 5. Produce Final Report
 
 Write synthesis into:
 
@@ -96,7 +119,9 @@ Render HTML:
 python scripts/md_to_html.py reviews/<paper>_<YYYY-MM-DD>/output/review_EN.md
 ```
 
-## 5. Interpretation of Verification Status
+If you ran the three-mode comparison, add `workflow_comparison.md` and `joint_review.md` to the notebook and follow the comparison-stage prompts in `reviews/<paper>-workflow-comparison_<YYYY-MM-DD>/notebooklm/WORKFLOW.md` before finalizing the joint review.
+
+## 6. Interpretation of Verification Status
 
 `verification/original_verification.json` status:
 
@@ -104,13 +129,15 @@ python scripts/md_to_html.py reviews/<paper>_<YYYY-MM-DD>/output/review_EN.md
 - `WARN`: continue with caution
 - `FAIL`: conversion quality is too low; use a better PDF or manual correction
 
+`--force` reuses the target review directory name and refreshes the generated scaffold so stale deterministic artifacts are not mixed into the new run.
+
 Reference statuses in `verification/reference_report.json`:
 
 - `verified`
 - `suspicious`
 - `unverifiable`
 
-## 6. Reproducibility
+## 7. Reproducibility
 
 To reproduce deterministic outputs, rerun on the same PDF and compare:
 

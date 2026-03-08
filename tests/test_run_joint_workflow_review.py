@@ -1,4 +1,6 @@
 import sys
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -62,6 +64,39 @@ class RunJointWorkflowReviewTests(unittest.TestCase):
         }
         md = joint._render_joint_review_md(Path("/tmp/doc.pdf"), [summary], summary, [])
         self.assertIn("n/a", md)
+
+    def test_extract_mode_summary_tolerates_missing_optional_artifacts(self) -> None:
+        mode = {"label": "m1", "chunking": "chunked", "pdf_native_only": False}
+        with tempfile.TemporaryDirectory() as td:
+            review_dir = Path(td)
+            (review_dir / "verification").mkdir()
+            (review_dir / "verification" / "original_verification.json").write_text(
+                json.dumps({"status": "PASS", "warnings": [], "failures": []}),
+                encoding="utf-8",
+            )
+            summary = joint._extract_mode_summary(mode, review_dir)
+
+        self.assertEqual(summary["status"], "PASS")
+        self.assertEqual(summary["lint_status"], "UNKNOWN")
+        self.assertEqual(summary["references_extracted"], 0)
+
+    def test_comparison_notebooklm_template_includes_successful_mode_artifacts(self) -> None:
+        summaries = [
+            {"label": "chunked-md", "review_dir": "/tmp/review-a"},
+            {"label": "pdf-native-only", "review_dir": None},
+        ]
+
+        workflow = joint._comparison_notebooklm_workflow_template(
+            Path("/tmp/comparison"),
+            Path("/tmp/paper.pdf"),
+            summaries,
+        )
+
+        self.assertIn("/tmp/paper.pdf", workflow)
+        self.assertIn("chunk-overlap, paragraph-overlap, and page-overlap", workflow)
+        self.assertIn("workflow_comparison.md", workflow)
+        self.assertIn("/tmp/review-a/input/original_converted.md", workflow)
+        self.assertNotIn("None", workflow)
 
 
 if __name__ == "__main__":
